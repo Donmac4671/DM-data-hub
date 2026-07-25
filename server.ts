@@ -54,43 +54,66 @@ function extractWebhookData(body: any): {
   rawSms: string;
   senderPhone: string;
 } {
-  const rawSms = typeof body === 'string'
-    ? body
-    : (body.text || body.message || body.body || body.sms || body.content || body.msg || body.rawSms || '');
+  if (!body) body = {};
 
-  const senderPhone = body.from || body.sender || body.phone || body.senderPhone || 'SMS Forwarder';
+  let rawSms = typeof body === 'string' ? body : '';
 
-  let momoTxnId = body.momoTxnId || body.txnId || body.transaction_id || body.ref || null;
-  let amount = body.amount ? Number(body.amount) : null;
-  let network: 'MTN' | 'Telecel' | 'AirtelTigo' | null = body.network || null;
-  let referenceCode: string | null = body.reference || body.refCode || null;
+  if (!rawSms && typeof body === 'object') {
+    rawSms = body.text || body.message || body.body || body.sms || body.content ||
+             body.msg || body.rawSms || body.smsContent || body.sms_body ||
+             body.msg_body || body.notification || body.data || '';
+
+    if (!rawSms) {
+      for (const val of Object.values(body)) {
+        if (typeof val === 'string' && val.length > 10) {
+          const lower = val.toLowerCase();
+          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || lower.includes('received') || lower.includes('payment')) {
+            rawSms = val;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!rawSms) {
+      try {
+        rawSms = JSON.stringify(body);
+      } catch (e) {
+        rawSms = '';
+      }
+    }
+  }
+
+  const senderPhone = (typeof body === 'object' && (body.from || body.sender || body.phone || body.senderPhone || body.address)) || 'SMS Forwarder';
+
+  let momoTxnId = (typeof body === 'object' && (body.momoTxnId || body.txnId || body.transaction_id || body.ref)) || null;
+  let amount = (typeof body === 'object' && body.amount) ? Number(body.amount) : null;
+  let network: 'MTN' | 'Telecel' | 'AirtelTigo' | null = (typeof body === 'object' && body.network) || null;
+  let referenceCode: string | null = (typeof body === 'object' && (body.reference || body.refCode)) || null;
 
   if (rawSms) {
-    // Clean OCR typos like 18.OO -> 18.00
     const smsCleaned = rawSms
       .replace(/(\d+)\.[OOoo]/g, '$1.00')
       .replace(/(\d+)\.[Oo]/g, '$1.00');
 
-    // 1. Transaction ID extraction
     if (!momoTxnId) {
-      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Ref ID|ID)[:\s]*([0-9A-Za-z]{8,16})/i) ||
-                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,14})/i) ||
-                       smsCleaned.match(/\b([0-9]{9,12})\b/);
+      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Trans ID|Ref ID|ID|Ref)[:\s]*([0-9A-Za-z]{6,20})/i) ||
+                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,16})/i) ||
+                       smsCleaned.match(/\b([0-9]{9,16})\b/);
       if (txnMatch) {
         momoTxnId = txnMatch[1].trim();
       }
     }
 
-    // 2. Amount extraction (e.g. GHS 8.00, GHS 18.OO, GHS 20.00, GHS92)
-    if (!amount) {
+    if (!amount || isNaN(amount)) {
       const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC)/i);
+                          smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i) ||
+                          smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
       }
     }
 
-    // 3. Network extraction
     if (!network) {
       const smsLower = rawSms.toLowerCase();
       if (smsLower.includes('telecel') || smsLower.includes('vodafone')) {
@@ -98,11 +121,10 @@ function extractWebhookData(body: any): {
       } else if (smsLower.includes('airtel') || smsLower.includes('tigo') || smsLower.includes('at money') || smsLower.includes('at ')) {
         network = 'AirtelTigo';
       } else {
-        network = 'MTN'; // Default fallback
+        network = 'MTN';
       }
     }
 
-    // 4. Reference Code extraction
     if (!referenceCode) {
       const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
       if (refMatch) {

@@ -384,3 +384,74 @@ export async function updateClaimInSupabase(claimId: string, status: string, adm
     console.error('Error updating claim in Supabase:', err);
   }
 }
+
+// ==========================================
+// COMPLAINTS SUPABASE INTEGRATION
+// ==========================================
+export async function fetchComplaintsFromSupabase(): Promise<any[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('complaints').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.warn('Error fetching complaints from Supabase:', error.message);
+      return [];
+    }
+    return (data || []).map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name || 'Customer',
+      subject: row.subject,
+      message: row.message,
+      orderNumber: row.order_number || undefined,
+      momoTxnId: row.momo_txn_id || undefined,
+      status: row.status || 'open',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at || row.created_at,
+      messages: typeof row.messages === 'string' ? JSON.parse(row.messages) : (row.messages || []),
+    }));
+  } catch (err) {
+    console.error('Error in fetchComplaintsFromSupabase:', err);
+    return [];
+  }
+}
+
+export async function createComplaintInSupabase(c: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      id: c.id,
+      user_id: c.userId,
+      user_email: c.userEmail,
+      user_name: c.userName,
+      subject: c.subject,
+      message: c.message,
+      order_number: c.orderNumber || '',
+      momo_txn_id: c.momoTxnId || '',
+      status: c.status || 'open',
+      messages: c.messages || [],
+      created_at: c.createdAt || new Date().toISOString(),
+      updated_at: c.updatedAt || new Date().toISOString(),
+    };
+    const { error } = await supabase.from('complaints').insert([row]);
+    if (error) console.error('Error inserting complaint in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in createComplaintInSupabase:', err);
+  }
+}
+
+export async function updateComplaintInSupabase(c: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      status: c.status,
+      messages: c.messages,
+      updated_at: c.updatedAt || new Date().toISOString(),
+    };
+    const { error } = await supabase.from('complaints').update(row).eq('id', c.id);
+    if (error) console.error('Error updating complaint in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in updateComplaintInSupabase:', err);
+  }
+}
+

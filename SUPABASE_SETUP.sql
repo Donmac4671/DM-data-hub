@@ -52,7 +52,7 @@ CREATE TABLE public.data_packages (
 -- 5. CREATE PENDING TOP-UP REQUESTS TABLE
 CREATE TABLE public.pending_topups (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id TEXT DEFAULT '',
   user_email TEXT NOT NULL,
   user_name TEXT NOT NULL,
   reference_code TEXT UNIQUE NOT NULL, -- e.g. DMH-849201
@@ -66,7 +66,7 @@ CREATE TABLE public.pending_topups (
 -- 6. CREATE WALLET TRANSACTIONS TABLE
 CREATE TABLE public.wallet_transactions (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id TEXT DEFAULT '',
   amount DECIMAL(10, 2) NOT NULL,
   type TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE public.wallet_transactions (
 CREATE TABLE public.orders (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
   order_number TEXT UNIQUE NOT NULL,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id TEXT DEFAULT '',
   user_email TEXT NOT NULL,
   user_name TEXT DEFAULT '',
   total_amount DECIMAL(10, 2) NOT NULL,
@@ -106,10 +106,10 @@ CREATE TABLE public.sms_webhooks (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. CREATE PAYMENT CLAIMS TABLE
+-- 9. CREATE PAYMENT CLAIMS TABLE
 CREATE TABLE public.payment_claims (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id TEXT DEFAULT '',
   user_email TEXT NOT NULL,
   user_name TEXT NOT NULL,
   momo_txn_id TEXT NOT NULL,
@@ -121,7 +121,7 @@ CREATE TABLE public.payment_claims (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. CREATE ANNOUNCEMENTS TABLE
+-- 10. CREATE ANNOUNCEMENTS TABLE
 CREATE TABLE public.announcements (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
   title TEXT NOT NULL,
@@ -131,10 +131,10 @@ CREATE TABLE public.announcements (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 10. CREATE COMPLAINTS TABLE
+-- 11. CREATE COMPLAINTS TABLE
 CREATE TABLE public.complaints (
   id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
-  user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id TEXT DEFAULT '',
   user_email TEXT NOT NULL,
   user_name TEXT NOT NULL,
   subject TEXT NOT NULL,

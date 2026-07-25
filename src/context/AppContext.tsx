@@ -15,6 +15,9 @@ import {
   fetchClaimsFromSupabase,
   createClaimInSupabase,
   updateClaimInSupabase,
+  fetchComplaintsFromSupabase,
+  createComplaintInSupabase,
+  updateComplaintInSupabase,
   isSupabaseConfigured,
 } from '../lib/supabase';
 import {
@@ -252,6 +255,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
       });
+
+      fetchComplaintsFromSupabase().then(spComps => {
+        if (spComps.length > 0) {
+          setComplaints(prev => {
+            const map = new Map<string, Complaint>();
+            prev.forEach(c => map.set(c.id, c));
+            spComps.forEach(c => map.set(c.id, c));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            localStorage.setItem('dmh_complaints', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      });
     }
   }, []);
 
@@ -370,6 +386,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
               if (JSON.stringify(prev) !== JSON.stringify(merged)) {
                 localStorage.setItem('dmh_claims', JSON.stringify(merged));
+                return merged;
+              }
+              return prev;
+            });
+          }
+        });
+
+        fetchComplaintsFromSupabase().then(spComps => {
+          if (spComps.length > 0) {
+            setComplaints(prev => {
+              const map = new Map<string, Complaint>();
+              prev.forEach(c => map.set(c.id, c));
+              spComps.forEach(c => map.set(c.id, c));
+              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+                localStorage.setItem('dmh_complaints', JSON.stringify(merged));
                 return merged;
               }
               return prev;
@@ -1265,10 +1297,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       localStorage.setItem('dmh_complaints', JSON.stringify(next));
       return next;
     });
+
+    if (isSupabaseConfigured) {
+      createComplaintInSupabase(newComp);
+    }
+
     showToast('Complaint Submitted', 'Our support team will respond shortly.', 'success');
   };
 
   const replyToComplaint = (complaintId: string, message: string) => {
+    let updatedComplaint: Complaint | null = null;
     setComplaints(prev => {
       const next = prev.map(c => {
         if (c.id === complaintId) {
@@ -1279,25 +1317,47 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             message,
             createdAt: new Date().toISOString(),
           };
-          return {
+          const updated = {
             ...c,
             status: activeRole === 'admin' ? 'in_progress' : c.status,
             updatedAt: new Date().toISOString(),
             messages: [...c.messages, newMsg],
           };
+          updatedComplaint = updated as Complaint;
+          return updated;
         }
         return c;
       });
       localStorage.setItem('dmh_complaints', JSON.stringify(next));
       return next;
     });
+
+    if (isSupabaseConfigured && updatedComplaint) {
+      updateComplaintInSupabase(updatedComplaint);
+    }
+
     showToast('Reply Sent', 'Your message has been posted.', 'info');
   };
 
   const updateComplaintStatus = (complaintId: string, status: Complaint['status']) => {
-    setComplaints(prev =>
-      prev.map(c => (c.id === complaintId ? { ...c, status, updatedAt: new Date().toISOString() } : c))
-    );
+    let updatedComplaint: Complaint | null = null;
+    setComplaints(prev => {
+      const next = prev.map(c => {
+        if (c.id === complaintId) {
+          const updated = { ...c, status, updatedAt: new Date().toISOString() };
+          updatedComplaint = updated;
+          return updated;
+        }
+        return c;
+      });
+      localStorage.setItem('dmh_complaints', JSON.stringify(next));
+      return next;
+    });
+
+    if (isSupabaseConfigured && updatedComplaint) {
+      updateComplaintInSupabase(updatedComplaint);
+    }
+
     showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
   };
 
