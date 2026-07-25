@@ -549,6 +549,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders(prev => {
       const next = [newOrder, ...prev];
       localStorage.setItem('dmh_orders', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
       return next;
     });
     clearCart();
@@ -568,9 +569,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateOrderStatus = (orderId: string, status: OrderStatus, failureReason?: string) => {
-    setOrders(prev =>
-      prev.map(o => (o.id === orderId ? { ...o, status, failureReason, completedAt: status === 'completed' ? new Date().toISOString() : o.completedAt } : o))
-    );
+    setOrders(prev => {
+      const next = prev.map(o => (o.id === orderId ? { ...o, status, failureReason, completedAt: status === 'completed' ? new Date().toISOString() : o.completedAt } : o));
+      localStorage.setItem('dmh_orders', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
     addAuditLog('UPDATE_ORDER_STATUS', `Order ${orderId} status set to ${status}`);
     showToast('Order Status Updated', `Order set to ${status.toUpperCase()}`, 'info');
   };

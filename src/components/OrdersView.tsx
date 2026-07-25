@@ -17,8 +17,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
     searchQuery: '',
     statusFilter: 'all',
     networkFilter: 'all',
-    startDate: getTodayStr(),
-    endDate: getTodayStr(),
+    startDate: '',
+    endDate: '',
   });
 
   const handleFilterChange = (updated: Partial<OrderFiltersState>) => {
@@ -30,8 +30,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
       searchQuery: '',
       statusFilter: 'all',
       networkFilter: 'all',
-      startDate: getTodayStr(),
-      endDate: getTodayStr(),
+      startDate: '',
+      endDate: '',
     });
   };
 

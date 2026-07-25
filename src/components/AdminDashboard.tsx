@@ -96,8 +96,8 @@ export const AdminDashboard: React.FC = () => {
     searchQuery: '',
     statusFilter: 'all',
     networkFilter: 'all',
-    startDate: getTodayStr(),
-    endDate: getTodayStr(),
+    startDate: '',
+    endDate: '',
   });
 
   const filteredAdminOrders = filterOrders(orders, adminOrderFilters);
@@ -919,30 +919,60 @@ export const AdminDashboard: React.FC = () => {
             </div>
 
             {/* Webhook URL Endpoint Box */}
-            <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-2">
+            <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase tracking-wider text-amber-400">
-                  📱 Your SMS Forwarder Endpoint URL:
+                <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                  <span>📱 SMS Forwarder Endpoint URLs:</span>
                 </span>
                 <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                  POST Endpoint Active
+                  HTTP POST / GET Supported
                 </span>
               </div>
-              <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto">
-                <span className="truncate select-all">{window.location.origin}/api/webhook/sms</span>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/api/webhook/sms`);
-                    showToast('Webhook URL Copied!', 'Paste this into your SMS Forwarder app.', 'success');
-                  }}
-                  className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
-                >
-                  Copy Webhook URL
-                </button>
+
+              {/* Endpoint 1: App Instance URL */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase text-slate-400">Current App Environment URL:</div>
+                <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto">
+                  <span className="truncate select-all">{window.location.origin}/api/webhook/sms</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/api/webhook/sms`);
+                      showToast('App Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
+                    }}
+                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
+                  >
+                    Copy App URL
+                  </button>
+                </div>
               </div>
-              <p className="text-[11px] text-slate-400 font-sans leading-relaxed">
-                <strong className="text-slate-200">Filtering Logic:</strong> The webhook automatically filters and extracts only SMS messages containing a valid <span className="text-amber-400 font-semibold">Transaction ID</span>, <span className="text-amber-400 font-semibold font-mono">Amount (GHS)</span>, and <span className="text-amber-400 font-semibold">Telecom Network</span> (MTN, Telecel, or AirtelTigo).
-              </p>
+
+              {/* Endpoint 2: Vercel Production URL */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold uppercase text-slate-400">Vercel Production Domain Endpoint:</div>
+                <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300 overflow-x-auto">
+                  <span className="truncate select-all">https://dm-data-hub.vercel.app/api/webhook/sms</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText('https://dm-data-hub.vercel.app/api/webhook/sms');
+                      showToast('Vercel Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
+                    }}
+                    className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
+                  >
+                    Copy Vercel URL
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] text-slate-300 space-y-1 font-sans">
+                <div className="font-bold text-amber-400">💡 SMS Forwarder App Setup Instructions:</div>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-400 text-[11px]">
+                  <li>In your Android SMS Forwarder app, set Target / Destination to <strong className="text-white">Webhook / URL</strong>.</li>
+                  <li>Paste the URL above (<code className="text-amber-300">/api/webhook/sms</code>).</li>
+                  <li>Set Method to <strong className="text-white">POST</strong> or <strong className="text-white">GET</strong>.</li>
+                  <li>Ensure payload field includes <code className="text-amber-300">text</code>, <code className="text-amber-300">message</code>, or <code className="text-amber-300">body</code> containing the raw Mobile Money SMS.</li>
+                  <li>Automatically extracts MTN, Telecel, and AirtelTigo payment receipts and top-ups!</li>
+                </ul>
+              </div>
             </div>
 
             {/* Inbound SMS Simulator Form */}
