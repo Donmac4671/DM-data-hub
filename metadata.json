@@ -1,0 +1,8 @@
+{
+  "name": "Donmac Data Hub",
+  "description": "Ghana Telecom Data \u0026 Mobile Money Wallet Platform for MTN, Telecel, and AirtelTigo (iShare \u0026 Big Time)",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
