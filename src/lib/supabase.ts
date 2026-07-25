@@ -67,6 +67,28 @@ export async function registerUserInSupabase(profile: UserProfile, rawPassword?:
     throw new Error(`An account with email address ${emailClean} already exists. Please sign in instead.`);
   }
 
+  // Register in Supabase Auth (auth.users)
+  try {
+    const { data: authData, error: authErr } = await supabase.auth.signUp({
+      email: emailClean,
+      password: rawPassword || 'user123',
+      options: {
+        data: {
+          full_name: profile.fullName,
+          phone_number: profile.phoneNumber,
+          role: profile.role || 'customer'
+        }
+      }
+    });
+    if (authErr) {
+      console.warn('Supabase Auth signUp warning (will proceed with profiles table):', authErr.message);
+    } else if (authData?.user?.id) {
+      profile.id = authData.user.id;
+    }
+  } catch (err) {
+    console.warn('Supabase auth.signUp call failed:', err);
+  }
+
   // Insert new row into profiles table
   const rowToInsert = {
     ...mapProfileToRow(profile, rawPassword),

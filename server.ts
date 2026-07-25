@@ -156,33 +156,27 @@ async function startServer() {
         return res.json({ success: true, count: serverWebhooks.length, data: serverWebhooks });
       }
 
-      const { momoTxnId, amount, network, rawSms, senderPhone } = extractWebhookData(sourceData);
+      const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
 
-      if (!momoTxnId || !amount) {
-        const missing = [];
-        if (!momoTxnId) missing.push('Transaction ID');
-        if (!amount) missing.push('Amount');
-
-        return res.status(200).send(`OK - SMS Received. Notice: Could not auto-extract ${missing.join(', ')}. Saved for review.`);
-      }
-
+      const effectiveTxnId = momoTxnId || `SMS-${Date.now()}`;
+      const effectiveAmount = amount || 0;
       const effectiveNetwork = network || 'MTN';
 
       // Check for duplicates
-      const existing = serverWebhooks.find(w => w.momoTxnId.toLowerCase() === momoTxnId.toLowerCase());
+      const existing = serverWebhooks.find(w => w.momoTxnId.toLowerCase() === effectiveTxnId.toLowerCase());
       if (existing) {
-        return res.status(200).send(`OK - Transaction ${momoTxnId} already recorded.`);
+        return res.status(200).send(`OK - Transaction ${effectiveTxnId} already recorded.`);
       }
 
       const newWebhook: ServerSmsWebhook = {
         id: `wh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        momoTxnId,
-        amount,
+        momoTxnId: effectiveTxnId,
+        amount: effectiveAmount,
         network: effectiveNetwork,
         status: 'unclaimed',
         claimedBy: '-',
         date: new Date().toISOString(),
-        rawSms,
+        rawSms: rawSms || JSON.stringify(sourceData),
         senderPhone
       };
 
@@ -190,13 +184,13 @@ async function startServer() {
 
       if (supabaseServer) {
         supabaseServer.from('sms_webhooks').upsert([{
-          momo_txn_id: momoTxnId,
-          amount: amount,
+          momo_txn_id: effectiveTxnId,
+          amount: effectiveAmount,
           network: effectiveNetwork,
           status: 'unclaimed',
           claimed_by: '-',
           reference_code: referenceCode || '',
-          raw_sms: rawSms || '',
+          raw_sms: rawSms || JSON.stringify(sourceData),
           sender_phone: senderPhone || '',
           created_at: newWebhook.date
         }], { onConflict: 'momo_txn_id' }).then(({ error }) => {
