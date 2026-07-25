@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { NetworkId, DataPackage } from '../types';
 import { Wifi, Search, Star, Zap, ShoppingCart, Filter } from 'lucide-react';
 import { matchDataPackage } from '../utils/search';
+import { validateGhanaNetworkPhone } from '../lib/networkValidator';
 
 export const PackageCatalog: React.FC = () => {
   const { packages, favorites, toggleFavorite, addToCart, networks, showToast } = useApp();
@@ -33,17 +34,19 @@ export const PackageCatalog: React.FC = () => {
 
   const handleConfirmAddToCart = () => {
     if (!selectedPkgForModal) return;
-    if (!recipientPhoneInput.trim()) {
-      showToast('Recipient Number Required', 'Please enter a Ghana phone number to receive this data bundle.', 'error');
+    const validation = validateGhanaNetworkPhone(recipientPhoneInput, selectedPkgForModal.network);
+    if (!validation.isValid) {
+      showToast('Network Mismatch Error', validation.errorMessage || 'Invalid recipient phone number.', 'error');
       return;
     }
+    const cleanPhone = validation.normalizedPhone || recipientPhoneInput.trim();
     addToCart({
       packageId: selectedPkgForModal.id,
       packageName: selectedPkgForModal.name,
       network: selectedPkgForModal.network,
       price: selectedPkgForModal.price,
       dataAmount: selectedPkgForModal.dataAmount,
-      recipientPhone: recipientPhoneInput.trim(),
+      recipientPhone: cleanPhone,
     });
     setSelectedPkgForModal(null);
   };

@@ -11,12 +11,14 @@ interface OrdersViewProps {
 export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) => {
   const { orders, currentUser, reorderOrder } = useApp();
 
+  const getTodayStr = () => new Date().toISOString().split('T')[0];
+
   const [filters, setFilters] = useState<OrderFiltersState>({
     searchQuery: '',
     statusFilter: 'all',
     networkFilter: 'all',
-    startDate: '',
-    endDate: '',
+    startDate: getTodayStr(),
+    endDate: getTodayStr(),
   });
 
   const handleFilterChange = (updated: Partial<OrderFiltersState>) => {
@@ -28,8 +30,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
       searchQuery: '',
       statusFilter: 'all',
       networkFilter: 'all',
-      startDate: '',
-      endDate: '',
+      startDate: getTodayStr(),
+      endDate: getTodayStr(),
     });
   };
 

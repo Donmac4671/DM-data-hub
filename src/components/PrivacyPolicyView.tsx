@@ -69,7 +69,7 @@ export const PrivacyPolicyView: React.FC<PrivacyPolicyViewProps> = ({ onBackToDa
             We strictly use your personal data to deliver and improve our services:
           </p>
           <ul className="list-disc pl-5 space-y-1.5 text-slate-600 dark:text-slate-400">
-            <li>Processing automated data & airtime top-ups across Telecel, MTN, and AT networks.</li>
+            <li>Processing automated data bundle top-ups across Telecel, MTN, and AT networks.</li>
             <li>Verifying Mobile Money payments and crediting your Donmac Data Hub account wallet.</li>
             <li>Sending real-time transaction notifications, order confirmations, and system alerts.</li>
             <li>Preventing fraudulent transactions and ensuring network API integrity.</li>

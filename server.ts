@@ -44,32 +44,41 @@ function extractWebhookData(body: any): {
   momoTxnId: string | null;
   amount: number | null;
   network: 'MTN' | 'Telecel' | 'AirtelTigo' | null;
+  referenceCode: string | null;
   rawSms: string;
   senderPhone: string;
 } {
-  const rawSms = body.text || body.message || body.body || body.sms || body.content || body.msg || (typeof body === 'string' ? body : '');
+  const rawSms = typeof body === 'string'
+    ? body
+    : (body.text || body.message || body.body || body.sms || body.content || body.msg || body.rawSms || '');
+
   const senderPhone = body.from || body.sender || body.phone || body.senderPhone || 'SMS Forwarder';
 
   let momoTxnId = body.momoTxnId || body.txnId || body.transaction_id || body.ref || null;
   let amount = body.amount ? Number(body.amount) : null;
   let network: 'MTN' | 'Telecel' | 'AirtelTigo' | null = body.network || null;
+  let referenceCode: string | null = body.reference || body.refCode || null;
 
-  // Extract fields from raw SMS body if missing
   if (rawSms) {
+    // Clean OCR typos like 18.OO -> 18.00
+    const smsCleaned = rawSms
+      .replace(/(\d+)\.[OOoo]/g, '$1.00')
+      .replace(/(\d+)\.[Oo]/g, '$1.00');
+
     // 1. Transaction ID extraction
     if (!momoTxnId) {
-      const txnMatch = rawSms.match(/(?:Financial Transaction Id|Transaction Id|Transaction ID|Txn ID|Ref|ID):\s*([0-9A-Za-z]{8,16})/i) ||
-                       rawSms.match(/(?:id|ref):\s*([0-9]{8,14})/i) ||
-                       rawSms.match(/\b([0-9]{9,12})\b/);
+      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Ref ID|ID)[:\s]*([0-9A-Za-z]{8,16})/i) ||
+                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,14})/i) ||
+                       smsCleaned.match(/\b([0-9]{9,12})\b/);
       if (txnMatch) {
         momoTxnId = txnMatch[1].trim();
       }
     }
 
-    // 2. Amount extraction
+    // 2. Amount extraction (e.g. GHS 8.00, GHS 18.OO, GHS 20.00, GHS92)
     if (!amount) {
-      const amountMatch = rawSms.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          rawSms.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC)/i);
+      const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
+                          smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC)/i);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
       }
@@ -83,12 +92,29 @@ function extractWebhookData(body: any): {
       } else if (smsLower.includes('airtel') || smsLower.includes('tigo') || smsLower.includes('at money') || smsLower.includes('at ')) {
         network = 'AirtelTigo';
       } else {
-        network = 'MTN'; // Default fallback for Ghana MoMo forwarder
+        network = 'MTN'; // Default fallback
+      }
+    }
+
+    // 4. Reference Code extraction
+    if (!referenceCode) {
+      const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
+      if (refMatch) {
+        const fullRef = refMatch[1].trim();
+        if (fullRef.includes(',')) {
+          const parts = fullRef.split(',').map(p => p.trim());
+          const lastPart = parts[parts.length - 1];
+          const codeMatch = lastPart.match(/([A-Za-z0-9]+)/);
+          if (codeMatch) referenceCode = codeMatch[1];
+        } else {
+          const codeMatch = fullRef.match(/([A-Za-z0-9_-]+)/);
+          if (codeMatch) referenceCode = codeMatch[1];
+        }
       }
     }
   }
 
-  return { momoTxnId, amount, network, rawSms, senderPhone };
+  return { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
 }
 
 async function startServer() {
@@ -131,7 +157,7 @@ async function startServer() {
         if (!momoTxnId) missing.push('Transaction ID');
         if (!amount) missing.push('Amount');
 
-        return res.status(400).send(`OK - Warning: Unprocessed SMS. Could not extract: ${missing.join(', ')}.`);
+        return res.status(200).send(`OK - SMS Received. Notice: Could not auto-extract ${missing.join(', ')}. Saved for review.`);
       }
 
       const effectiveNetwork = network || 'MTN';

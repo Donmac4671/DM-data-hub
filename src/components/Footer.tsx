@@ -30,7 +30,7 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab, activeTab }) => {
             </div>
 
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">
-              Ghana's premier automated high-speed data & airtime dispatch platform. Supporting Telecel, MTN, and AT networks with instant MoMo wallet auto-crediting.
+              Ghana's premier automated high-speed data bundle dispatch platform. Supporting Telecel, MTN, and AT networks with instant MoMo wallet auto-crediting.
             </p>
 
             <div className="flex items-center space-x-2 text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 w-fit">

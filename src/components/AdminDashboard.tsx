@@ -90,12 +90,14 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const getTodayStr = () => new Date().toISOString().split('T')[0];
+
   const [adminOrderFilters, setAdminOrderFilters] = useState<OrderFiltersState>({
     searchQuery: '',
     statusFilter: 'all',
     networkFilter: 'all',
-    startDate: '',
-    endDate: '',
+    startDate: getTodayStr(),
+    endDate: getTodayStr(),
   });
 
   const filteredAdminOrders = filterOrders(orders, adminOrderFilters);
@@ -213,27 +215,87 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const exportOrdersCSV = () => {
-    const headers = 'Order Number,User Email,Total Amount,Status,Created At\n';
-    const rows = orders
-      .map(o => `${o.orderNumber},${o.userEmail},${o.totalAmount},${o.status},${o.createdAt}`)
-      .join('\n');
-    const blob = new Blob([headers + rows], { type: 'text/csv' });
+    const generatedAt = new Date().toLocaleString('en-GB', { timeZone: 'GMT' });
+    const reportDate = new Date().toISOString().split('T')[0];
+
+    let content = `=================================================================================\n`;
+    content += `DONMAC DATA HUB GHANA - DETAILED EXECUTIVE ORDERS REPORT\n`;
+    content += `Generated Date: ${generatedAt} GMT\n`;
+    content += `Filter Scope: ${adminOrderFilters.startDate || reportDate} to ${adminOrderFilters.endDate || reportDate}\n`;
+    content += `Total Orders Exported: ${filteredAdminOrders.length}\n`;
+    content += `Total Order Revenue: GHS ${filteredAdminOrders.reduce((s, o) => s + o.totalAmount, 0).toFixed(2)}\n`;
+    content += `=================================================================================\n\n`;
+
+    content += `"Order Number","Customer Name","Customer Email","Recipient Phone","Network","Data Package","Amount (GHS)","Status","Failure Reason","Date & Time"\n`;
+
+    filteredAdminOrders.forEach(ord => {
+      ord.items.forEach(item => {
+        const formattedDate = new Date(ord.createdAt).toLocaleString('en-GB', { timeZone: 'GMT' });
+        const cleanName = `"${(ord.userName || 'Customer').replace(/"/g, '""')}"`;
+        const cleanEmail = `"${ord.userEmail.replace(/"/g, '""')}"`;
+        const cleanPkg = `"${item.packageName.replace(/"/g, '""')}"`;
+        const cleanReason = `"${(ord.failureReason || '').replace(/"/g, '""')}"`;
+
+        content += `"${ord.orderNumber}",${cleanName},${cleanEmail},"${item.recipientPhone}","${item.network.toUpperCase()}",${cleanPkg},"${item.price.toFixed(2)}","${ord.status.toUpperCase()}",${cleanReason},"${formattedDate}"\n`;
+      });
+    });
+
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `donmac_orders_report_${Date.now()}.csv`;
+    a.download = `Donmac_Orders_Report_${reportDate}.csv`;
     a.click();
+    showToast('Report Generated', 'Professional CSV orders report downloaded successfully.', 'success');
   };
 
   const exportDailyReportCSV = () => {
-    const headers = 'Date,Users Count,Total Revenue (GHS),Orders Count\n';
-    const row = `${new Date().toISOString().split('T')[0]},${userCount},${totalRevenue.toFixed(2)},${orders.length}\n`;
-    const blob = new Blob([headers + row], { type: 'text/csv' });
+    const generatedAt = new Date().toLocaleString('en-GB', { timeZone: 'GMT' });
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const completedOrders = orders.filter(o => o.status === 'completed' || o.status === 'delivered');
+    const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'processing' || o.status === 'waiting');
+    const failedOrders = orders.filter(o => o.status === 'failed');
+
+    let content = `=================================================================================\n`;
+    content += `DONMAC DATA HUB GHANA - DAILY SYSTEM & FINANCIAL SUMMARY REPORT\n`;
+    content += `Report Date: ${todayStr}\n`;
+    content += `Generated Time: ${generatedAt} GMT\n`;
+    content += `=================================================================================\n\n`;
+
+    content += `--- EXECUTIVE FINANCIAL METRICS ---\n`;
+    content += `Total Registered Users: ${userCount}\n`;
+    content += `Total System Revenue: GHS ${totalRevenue.toFixed(2)}\n`;
+    content += `Total User Wallet Balances: GHS ${totalWalletBalance.toFixed(2)}\n`;
+    content += `Total Orders Processed: ${orders.length}\n`;
+    content += `  - Completed/Delivered Orders: ${completedOrders.length}\n`;
+    content += `  - Pending/Processing Orders: ${pendingOrders.length}\n`;
+    content += `  - Failed Orders: ${failedOrders.length}\n`;
+    content += `Total Verified Top-Ups: ${webhookLogs.length}\n\n`;
+
+    content += `--- NETWORK BREAKDOWN ---\n`;
+    const mtnCount = orders.filter(o => o.items.some(i => i.network === 'mtn')).length;
+    const telecelCount = orders.filter(o => o.items.some(i => i.network === 'telecel')).length;
+    const atCount = orders.filter(o => o.items.some(i => i.network.includes('airteltigo') || i.network === 'at')).length;
+
+    content += `MTN Ghana Orders: ${mtnCount}\n`;
+    content += `Telecel Ghana Orders: ${telecelCount}\n`;
+    content += `AT / AirtelTigo Ghana Orders: ${atCount}\n\n`;
+
+    content += `"Metric","Value","Notes"\n`;
+    content += `"Total Users","${userCount}","Active customer accounts"\n`;
+    content += `"Total Revenue (GHS)","${totalRevenue.toFixed(2)}","Gross transaction volume"\n`;
+    content += `"Wallet Balance Pool (GHS)","${totalWalletBalance.toFixed(2)}","Outstanding customer liabilities"\n`;
+    content += `"Total Orders","${orders.length}","All order statuses"\n`;
+    content += `"Completed Orders","${completedOrders.length}","Successfully dispatched"\n`;
+
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `donmac_daily_report_${Date.now()}.csv`;
+    a.download = `Donmac_Daily_Executive_Report_${todayStr}.csv`;
     a.click();
+    showToast('Daily Summary Exported', 'Professional daily report downloaded successfully.', 'success');
   };
 
   const getOrderStatusBadge = (status: OrderStatus) => {
@@ -318,12 +380,11 @@ export const AdminDashboard: React.FC = () => {
             { id: 'analytics', label: 'Analytics' },
             { id: 'users', label: `Users (${usersList.length})` },
             { id: 'orders', label: `Orders (${orders.length})` },
-            { id: 'claims', label: `Verified Txn IDs (${claims.filter(c => c.status === 'pending').length} Pending)` },
             { id: 'packages', label: 'Package Catalog' },
             { id: 'announcements', label: 'Announcements' },
             { id: 'complaints', label: `Complaints (${complaints.filter(c => c.status === 'open' || c.status === 'in_progress').length})` },
             { id: 'networks', label: 'Networks Mode' },
-            { id: 'webhooks', label: `SMS Webhooks (${webhookLogs.length})` },
+            { id: 'webhooks', label: `SMS Webhooks & Claims (${webhookLogs.length})` },
           ].map(tab => (
             <button
               key={tab.id}
@@ -1052,6 +1113,104 @@ export const AdminDashboard: React.FC = () => {
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Verified MoMo Claims Submissions Table (Merged from Verified ID Tab) */}
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm space-y-0 mt-6">
+            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>Verified MoMo Txn ID Submissions ({claims.length})</span>
+                  {claims.filter(c => c.status === 'pending').length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-500 text-black">
+                      {claims.filter(c => c.status === 'pending').length} Pending
+                    </span>
+                  )}
+                </h4>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Customer-submitted transaction claims. Auto-credited when matched with incoming SMS webhooks.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    <th className="p-4">Txn ID</th>
+                    <th className="p-4">Customer</th>
+                    <th className="p-4">Amount</th>
+                    <th className="p-4">Network</th>
+                    <th className="p-4">MoMo Number</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">Date</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
+                  {claims.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center text-slate-500 dark:text-slate-400">
+                        No payment claims submitted yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    claims.map(claim => (
+                      <tr key={claim.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="p-4 font-mono font-bold text-amber-500">
+                          {claim.momoTxnId}
+                        </td>
+                        <td className="p-4">
+                          <div className="font-bold text-slate-900 dark:text-white">{claim.userName}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">{claim.userEmail}</div>
+                        </td>
+                        <td className="p-4 font-black font-mono text-slate-900 dark:text-white">
+                          GHS {claim.amount.toFixed(2)}
+                        </td>
+                        <td className="p-4 uppercase font-bold text-[10px] text-slate-600 dark:text-slate-300">
+                          {claim.momoNetwork}
+                        </td>
+                        <td className="p-4 font-mono text-slate-600 dark:text-slate-300">
+                          {claim.momoNumber}
+                        </td>
+                        <td className="p-4">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                            claim.status === 'approved'
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                              : claim.status === 'rejected'
+                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
+                          }`}>
+                            {claim.status}
+                          </span>
+                        </td>
+                        <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                          {new Date(claim.createdAt).toLocaleString()}
+                        </td>
+                        <td className="p-4 text-right space-x-1">
+                          {claim.status === 'pending' && (
+                            <>
+                              <button
+                                onClick={() => processClaim(claim.id, 'approved', 'Manually verified by admin')}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
+                              >
+                                Approve & Credit
+                              </button>
+                              <button
+                                onClick={() => processClaim(claim.id, 'rejected', 'Invalid transaction details')}
+                                className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))

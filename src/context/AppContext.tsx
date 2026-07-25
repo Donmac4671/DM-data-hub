@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { playNotificationSound, playSuccessChime } from '../utils/audio';
+import { validateGhanaNetworkPhone } from '../lib/networkValidator';
 import {
   registerUserInSupabase,
   loginUserFromSupabase,
@@ -476,6 +477,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): { success: boolean; message: string; order?: Order } => {
     if (cart.length === 0) {
       return { success: false, message: 'Your cart is empty!' };
+    }
+
+    // Validate network prefix and special exception for each cart item
+    for (const item of cart) {
+      const targetPhone = item.recipientPhone || recipientPhone;
+      const validation = validateGhanaNetworkPhone(targetPhone, item.network);
+      if (!validation.isValid) {
+        return {
+          success: false,
+          message: validation.errorMessage || `Invalid recipient phone number for ${item.packageName}.`,
+        };
+      }
     }
 
     const total = cart.reduce((sum, item) => sum + item.price, 0);

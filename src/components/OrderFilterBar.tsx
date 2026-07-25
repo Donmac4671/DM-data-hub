@@ -152,6 +152,23 @@ export const OrderFilterBar: React.FC<OrderFilterBarProps> = ({
           />
         </div>
 
+        {/* Quick 'Today' Filter Button */}
+        <button
+          type="button"
+          onClick={() => {
+            const todayStr = new Date().toISOString().split('T')[0];
+            onFilterChange({ startDate: todayStr, endDate: todayStr });
+          }}
+          className={`px-3 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider transition-all border ${
+            filters.startDate === new Date().toISOString().split('T')[0] && filters.endDate === new Date().toISOString().split('T')[0]
+              ? 'bg-amber-500 text-black border-amber-400 shadow-md'
+              : 'bg-slate-800/80 text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+          }`}
+          title="Filter for today's date"
+        >
+          Today
+        </button>
+
         {/* Reset Filters Button */}
         {isFiltered && onReset && (
           <button

@@ -69,7 +69,7 @@ export const TermsOfServiceView: React.FC<TermsOfServiceViewProps> = ({ onBackTo
             Wallet balances can be funded via Mobile Money (MTN MoMo, Telecel Cash, AT Money) using automated reference codes or manual transaction claim verification:
           </p>
           <ul className="list-disc pl-5 space-y-1.5 text-slate-600 dark:text-slate-400">
-            <li>Wallet top-ups are non-refundable once credited to your account balance, but can be used to purchase any available data or airtime package.</li>
+            <li>Wallet top-ups are non-refundable once credited to your account balance, but can be used to purchase any available data package.</li>
             <li>Users must specify the exact Reference Code during MoMo transfers to ensure immediate auto-crediting.</li>
             <li>Manual claim submissions require valid MoMo Transaction IDs for admin verification.</li>
           </ul>

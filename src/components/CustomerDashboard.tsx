@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { NetworkId, DataPackage } from '../types';
 import { GreetingBanner } from './GreetingBanner';
 import { matchDataPackage } from '../utils/search';
+import { validateGhanaNetworkPhone } from '../lib/networkValidator';
 import {
   Wallet,
   PlusCircle,
@@ -372,17 +373,19 @@ const PackageCard: React.FC<{ pkg: DataPackage }> = ({ pkg }) => {
   };
 
   const confirmAddToCart = () => {
-    if (!recipientPhone.trim()) {
-      showToast('Recipient Phone Required', 'Please enter the Ghana phone number to receive this data bundle.', 'error');
+    const validation = validateGhanaNetworkPhone(recipientPhone, pkg.network);
+    if (!validation.isValid) {
+      showToast('Network Mismatch Error', validation.errorMessage || 'Invalid recipient phone number.', 'error');
       return;
     }
+    const cleanPhone = validation.normalizedPhone || recipientPhone.trim();
     addToCart({
       packageId: pkg.id,
       packageName: pkg.name,
       network: pkg.network,
       price: pkg.price,
       dataAmount: pkg.dataAmount,
-      recipientPhone: recipientPhone.trim(),
+      recipientPhone: cleanPhone,
     });
     setShowPhoneModal(false);
   };
