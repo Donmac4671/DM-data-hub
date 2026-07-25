@@ -6,6 +6,7 @@ import {
   loginUserFromSupabase,
   fetchUsersFromSupabase,
   updateProfileInSupabase,
+  deleteUserFromSupabase,
   fetchOrdersFromSupabase,
   createOrderInSupabase,
   updateOrderStatusInSupabase,
@@ -207,66 +208,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (isSupabaseConfigured) {
       fetchUsersFromSupabase().then(spUsers => {
-        if (spUsers.length > 0) {
-          setUsersList(prev => {
-            const map = new Map<string, UserProfile>();
-            prev.forEach(u => map.set(u.email.toLowerCase(), u));
-            spUsers.forEach(u => map.set(u.email.toLowerCase(), u));
-            return Array.from(map.values());
-          });
-        }
+        const adminExists = spUsers.some(u => u.role === 'admin' || u.email.toLowerCase() === MOCK_ADMIN_USER.email.toLowerCase());
+        const finalUsers = adminExists ? spUsers : [MOCK_ADMIN_USER, ...spUsers];
+        setUsersList(finalUsers);
+        localStorage.setItem('dmh_users', JSON.stringify(finalUsers));
       });
 
       fetchOrdersFromSupabase().then(spOrders => {
-        if (spOrders.length > 0) {
-          setOrders(prev => {
-            const map = new Map<string, Order>();
-            prev.forEach(o => map.set(o.id, o));
-            spOrders.forEach(o => map.set(o.id, o));
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            localStorage.setItem('dmh_orders', JSON.stringify(merged));
-            return merged;
-          });
-        }
+        setOrders(spOrders);
+        localStorage.setItem('dmh_orders', JSON.stringify(spOrders));
       });
 
       fetchWebhooksFromSupabase().then(spWhs => {
-        if (spWhs.length > 0) {
-          setWebhookLogs(prev => {
-            const map = new Map<string, SmsWebhookPayload>();
-            prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
-            spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
-            return merged;
-          });
-        }
+        setWebhookLogs(spWhs);
+        localStorage.setItem('dmh_webhooks', JSON.stringify(spWhs));
       });
 
       fetchClaimsFromSupabase().then(spClaims => {
-        if (spClaims.length > 0) {
-          setClaims(prev => {
-            const map = new Map<string, PaymentClaim>();
-            prev.forEach(c => map.set(c.id, c));
-            spClaims.forEach(c => map.set(c.id, c));
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            localStorage.setItem('dmh_claims', JSON.stringify(merged));
-            return merged;
-          });
-        }
+        setClaims(spClaims);
+        localStorage.setItem('dmh_claims', JSON.stringify(spClaims));
       });
 
       fetchComplaintsFromSupabase().then(spComps => {
-        if (spComps.length > 0) {
-          setComplaints(prev => {
-            const map = new Map<string, Complaint>();
-            prev.forEach(c => map.set(c.id, c));
-            spComps.forEach(c => map.set(c.id, c));
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            localStorage.setItem('dmh_complaints', JSON.stringify(merged));
-            return merged;
-          });
-        }
+        setComplaints(spComps);
+        localStorage.setItem('dmh_complaints', JSON.stringify(spComps));
       });
     }
   }, []);
@@ -345,68 +310,56 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       handleSync();
 
       if (isSupabaseConfigured) {
+        fetchUsersFromSupabase().then(spUsers => {
+          const adminExists = spUsers.some(u => u.role === 'admin' || u.email.toLowerCase() === MOCK_ADMIN_USER.email.toLowerCase());
+          const finalUsers = adminExists ? spUsers : [MOCK_ADMIN_USER, ...spUsers];
+          setUsersList(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(finalUsers)) {
+              localStorage.setItem('dmh_users', JSON.stringify(finalUsers));
+              return finalUsers;
+            }
+            return prev;
+          });
+        });
+
         fetchOrdersFromSupabase().then(spOrders => {
-          if (spOrders.length > 0) {
-            setOrders(prev => {
-              const map = new Map<string, Order>();
-              prev.forEach(o => map.set(o.id, o));
-              spOrders.forEach(o => map.set(o.id, o));
-              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-                localStorage.setItem('dmh_orders', JSON.stringify(merged));
-                return merged;
-              }
-              return prev;
-            });
-          }
+          setOrders(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(spOrders)) {
+              localStorage.setItem('dmh_orders', JSON.stringify(spOrders));
+              return spOrders;
+            }
+            return prev;
+          });
         });
 
         fetchWebhooksFromSupabase().then(spWhs => {
-          if (spWhs.length > 0) {
-            setWebhookLogs(prev => {
-              const map = new Map<string, SmsWebhookPayload>();
-              prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
-              spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
-              const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-                localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
-                return merged;
-              }
-              return prev;
-            });
-          }
+          setWebhookLogs(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(spWhs)) {
+              localStorage.setItem('dmh_webhooks', JSON.stringify(spWhs));
+              return spWhs;
+            }
+            return prev;
+          });
         });
 
         fetchClaimsFromSupabase().then(spClaims => {
-          if (spClaims.length > 0) {
-            setClaims(prev => {
-              const map = new Map<string, PaymentClaim>();
-              prev.forEach(c => map.set(c.id, c));
-              spClaims.forEach(c => map.set(c.id, c));
-              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-                localStorage.setItem('dmh_claims', JSON.stringify(merged));
-                return merged;
-              }
-              return prev;
-            });
-          }
+          setClaims(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(spClaims)) {
+              localStorage.setItem('dmh_claims', JSON.stringify(spClaims));
+              return spClaims;
+            }
+            return prev;
+          });
         });
 
         fetchComplaintsFromSupabase().then(spComps => {
-          if (spComps.length > 0) {
-            setComplaints(prev => {
-              const map = new Map<string, Complaint>();
-              prev.forEach(c => map.set(c.id, c));
-              spComps.forEach(c => map.set(c.id, c));
-              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
-                localStorage.setItem('dmh_complaints', JSON.stringify(merged));
-                return merged;
-              }
-              return prev;
-            });
-          }
+          setComplaints(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(spComps)) {
+              localStorage.setItem('dmh_complaints', JSON.stringify(spComps));
+              return spComps;
+            }
+            return prev;
+          });
         });
       }
 
@@ -1160,6 +1113,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteUser = (userId: string) => {
     setUsersList(prev => prev.filter(u => u.id !== userId));
+    if (isSupabaseConfigured) {
+      deleteUserFromSupabase(userId);
+    }
     addAuditLog('DELETE_USER', `Deleted user ID ${userId}`);
     showToast('User Deleted', 'User removed from system.', 'info');
   };

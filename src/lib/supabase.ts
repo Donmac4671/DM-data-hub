@@ -147,6 +147,19 @@ export async function loginUserFromSupabase(email: string, rawPassword?: string)
   return user;
 }
 
+export async function deleteUserFromSupabase(userIdOrEmail: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const isEmail = userIdOrEmail.includes('@');
+    const column = isEmail ? 'email' : 'id';
+    const val = isEmail ? userIdOrEmail.toLowerCase().trim() : userIdOrEmail;
+    const { error } = await supabase.from('profiles').delete().eq(column, val);
+    if (error) console.error('Error deleting profile in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in deleteUserFromSupabase:', err);
+  }
+}
+
 export async function fetchUsersFromSupabase(): Promise<UserProfile[]> {
   if (!supabase) return [];
   try {
