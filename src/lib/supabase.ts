@@ -468,3 +468,14 @@ export async function updateComplaintInSupabase(c: any): Promise<void> {
   }
 }
 
+export async function deleteComplaintFromSupabase(complaintId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('complaints').delete().eq('id', complaintId);
+    if (error) console.error('Error deleting complaint in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in deleteComplaintFromSupabase:', err);
+  }
+}
+
+

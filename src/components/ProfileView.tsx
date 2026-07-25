@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   User,
   Mail,
@@ -17,7 +18,8 @@ import {
   CheckCircle2,
   Lock,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  KeyRound
 } from 'lucide-react';
 
 interface ProfileViewProps {
@@ -35,6 +37,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenTopUp, setActive
     toggleTheme,
     logout,
     resetEverything,
+    showToast
   } = useApp();
 
   const [fullName, setFullName] = useState(currentUser.fullName || '');
@@ -42,6 +45,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenTopUp, setActive
   const [phoneNumber, setPhoneNumber] = useState(currentUser.phoneNumber || '');
   const [momoNumber, setMomoNumber] = useState(currentUser.momoNumber || '');
   const [isSaved, setIsSaved] = useState(false);
+
+  // Password state
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [isPasswordSaved, setIsPasswordSaved] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,6 +62,34 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenTopUp, setActive
     });
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
+  };
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    if (newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+
+    updateUserProfile({
+      password: newPassword,
+      passwordHash: newPassword,
+    });
+
+    if (isSupabaseConfigured && supabase) {
+      supabase.auth.updateUser({ password: newPassword }).catch(() => {});
+    }
+
+    setNewPassword('');
+    setConfirmPassword('');
+    setIsPasswordSaved(true);
+    showToast('Password Updated', 'Your security credentials have been updated successfully.', 'success');
+    setTimeout(() => setIsPasswordSaved(false), 3000);
   };
 
   const isAdmin = currentUser.role === 'admin' || currentUser.email === 'donmacdatahub@gmail.com';
@@ -234,6 +271,81 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onOpenTopUp, setActive
             >
               <Save className="w-4 h-4" />
               <span>Save Profile Changes</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Password & Security Section */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-6">
+        <div className="pb-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <div>
+            <h2 className="font-extrabold text-lg text-slate-900 dark:text-white flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-amber-500" />
+              <span>Password & Security</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">Update your account login password</p>
+          </div>
+          {isPasswordSaved && (
+            <div className="flex items-center space-x-1 text-emerald-600 dark:text-emerald-400 text-xs font-bold animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Password Updated!</span>
+            </div>
+          )}
+        </div>
+
+        {passwordError && (
+          <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-600 dark:text-rose-400 text-xs font-bold">
+            {passwordError}
+          </div>
+        )}
+
+        <form onSubmit={handlePasswordSubmit} className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                New Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="Min 6 characters"
+                  value={newPassword}
+                  onChange={e => setNewPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                Confirm New Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  placeholder="Re-enter new password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-2 flex justify-end">
+            <button
+              type="submit"
+              className="px-6 py-3 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-md flex items-center space-x-2 border border-slate-800 dark:border-slate-700"
+            >
+              <Lock className="w-4 h-4 text-amber-400" />
+              <span>Update Password</span>
             </button>
           </div>
         </form>

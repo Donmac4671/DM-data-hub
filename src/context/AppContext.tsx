@@ -19,6 +19,7 @@ import {
   fetchComplaintsFromSupabase,
   createComplaintInSupabase,
   updateComplaintInSupabase,
+  deleteComplaintFromSupabase,
   isSupabaseConfigured,
 } from '../lib/supabase';
 import {
@@ -121,6 +122,7 @@ interface AppContextType {
   submitComplaint: (subject: string, message: string, orderNumber?: string, momoTxnId?: string, screenshotUrl?: string) => void;
   replyToComplaint: (complaintId: string, message: string) => void;
   updateComplaintStatus: (complaintId: string, status: Complaint['status']) => void;
+  deleteComplaint: (complaintId: string) => void;
   
   // Announcements
   announcements: Announcement[];
@@ -208,30 +210,60 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (isSupabaseConfigured) {
       fetchUsersFromSupabase().then(spUsers => {
-        const adminExists = spUsers.some(u => u.role === 'admin' || u.email.toLowerCase() === MOCK_ADMIN_USER.email.toLowerCase());
-        const finalUsers = adminExists ? spUsers : [MOCK_ADMIN_USER, ...spUsers];
-        setUsersList(finalUsers);
-        localStorage.setItem('dmh_users', JSON.stringify(finalUsers));
+        setUsersList(prev => {
+          const map = new Map<string, UserProfile>();
+          prev.forEach(u => map.set(u.email.toLowerCase(), u));
+          spUsers.forEach(u => map.set(u.email.toLowerCase(), u));
+          const list = Array.from(map.values());
+          const adminExists = list.some(u => u.role === 'admin' || u.email.toLowerCase() === MOCK_ADMIN_USER.email.toLowerCase());
+          const finalUsers = adminExists ? list : [MOCK_ADMIN_USER, ...list];
+          localStorage.setItem('dmh_users', JSON.stringify(finalUsers));
+          return finalUsers;
+        });
       });
 
       fetchOrdersFromSupabase().then(spOrders => {
-        setOrders(spOrders);
-        localStorage.setItem('dmh_orders', JSON.stringify(spOrders));
+        setOrders(prev => {
+          const map = new Map<string, Order>();
+          prev.forEach(o => map.set(o.id, o));
+          spOrders.forEach(o => map.set(o.id, o));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          localStorage.setItem('dmh_orders', JSON.stringify(merged));
+          return merged;
+        });
       });
 
       fetchWebhooksFromSupabase().then(spWhs => {
-        setWebhookLogs(spWhs);
-        localStorage.setItem('dmh_webhooks', JSON.stringify(spWhs));
+        setWebhookLogs(prev => {
+          const map = new Map<string, SmsWebhookPayload>();
+          prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+          spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
+          return merged;
+        });
       });
 
       fetchClaimsFromSupabase().then(spClaims => {
-        setClaims(spClaims);
-        localStorage.setItem('dmh_claims', JSON.stringify(spClaims));
+        setClaims(prev => {
+          const map = new Map<string, PaymentClaim>();
+          prev.forEach(c => map.set(c.id, c));
+          spClaims.forEach(c => map.set(c.id, c));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          localStorage.setItem('dmh_claims', JSON.stringify(merged));
+          return merged;
+        });
       });
 
       fetchComplaintsFromSupabase().then(spComps => {
-        setComplaints(spComps);
-        localStorage.setItem('dmh_complaints', JSON.stringify(spComps));
+        setComplaints(prev => {
+          const map = new Map<string, Complaint>();
+          prev.forEach(c => map.set(c.id, c));
+          spComps.forEach(c => map.set(c.id, c));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          localStorage.setItem('dmh_complaints', JSON.stringify(merged));
+          return merged;
+        });
       });
     }
   }, []);
@@ -324,9 +356,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         fetchOrdersFromSupabase().then(spOrders => {
           setOrders(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(spOrders)) {
-              localStorage.setItem('dmh_orders', JSON.stringify(spOrders));
-              return spOrders;
+            const map = new Map<string, Order>();
+            prev.forEach(o => map.set(o.id, o));
+            spOrders.forEach(o => map.set(o.id, o));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+              localStorage.setItem('dmh_orders', JSON.stringify(merged));
+              return merged;
             }
             return prev;
           });
@@ -334,9 +370,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         fetchWebhooksFromSupabase().then(spWhs => {
           setWebhookLogs(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(spWhs)) {
-              localStorage.setItem('dmh_webhooks', JSON.stringify(spWhs));
-              return spWhs;
+            const map = new Map<string, SmsWebhookPayload>();
+            prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+            spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+              localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
+              return merged;
             }
             return prev;
           });
@@ -344,9 +384,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         fetchClaimsFromSupabase().then(spClaims => {
           setClaims(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(spClaims)) {
-              localStorage.setItem('dmh_claims', JSON.stringify(spClaims));
-              return spClaims;
+            const map = new Map<string, PaymentClaim>();
+            prev.forEach(c => map.set(c.id, c));
+            spClaims.forEach(c => map.set(c.id, c));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+              localStorage.setItem('dmh_claims', JSON.stringify(merged));
+              return merged;
             }
             return prev;
           });
@@ -354,9 +398,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         fetchComplaintsFromSupabase().then(spComps => {
           setComplaints(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(spComps)) {
-              localStorage.setItem('dmh_complaints', JSON.stringify(spComps));
-              return spComps;
+            const map = new Map<string, Complaint>();
+            prev.forEach(c => map.set(c.id, c));
+            spComps.forEach(c => map.set(c.id, c));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+              localStorage.setItem('dmh_complaints', JSON.stringify(merged));
+              return merged;
             }
             return prev;
           });
@@ -1317,6 +1365,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
   };
 
+  const deleteComplaint = (complaintId: string) => {
+    setComplaints(prev => {
+      const next = prev.filter(c => c.id !== complaintId);
+      localStorage.setItem('dmh_complaints', JSON.stringify(next));
+      return next;
+    });
+
+    if (isSupabaseConfigured) {
+      deleteComplaintFromSupabase(complaintId);
+    }
+
+    showToast('Complaint Deleted', 'Support ticket removed.', 'info');
+  };
+
   // Announcements
   const [announcements, setAnnouncements] = useState<Announcement[]>(() =>
     getStorageItem('dmh_announcements', INITIAL_ANNOUNCEMENTS)
@@ -1465,6 +1527,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         submitComplaint,
         replyToComplaint,
         updateComplaintStatus,
+        deleteComplaint,
         announcements,
         addAnnouncement,
         toggleAnnouncement,

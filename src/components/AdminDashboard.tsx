@@ -58,6 +58,7 @@ export const AdminDashboard: React.FC = () => {
     updateOrderStatus,
     complaints,
     replyToComplaint,
+    deleteComplaint,
     usersList,
     toggleBlockUser,
     deleteUser,
@@ -110,14 +111,38 @@ export const AdminDashboard: React.FC = () => {
   const pendingOrdersCount = orders.filter(o => o.status === 'pending' || o.status === 'processing' || o.status === 'waiting').length;
   const deliveredOrdersCount = orders.filter(o => o.status === 'completed' || o.status === 'delivered').length;
 
+  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayStats: Record<string, { Revenue: number; Orders: number }> = {
+    Mon: { Revenue: 0, Orders: 0 },
+    Tue: { Revenue: 0, Orders: 0 },
+    Wed: { Revenue: 0, Orders: 0 },
+    Thu: { Revenue: 0, Orders: 0 },
+    Fri: { Revenue: 0, Orders: 0 },
+    Sat: { Revenue: 0, Orders: 0 },
+    Sun: { Revenue: 0, Orders: 0 },
+  };
+
+  orders.forEach(o => {
+    try {
+      const d = new Date(o.createdAt);
+      if (!isNaN(d.getTime())) {
+        const dayName = daysOfWeek[d.getDay()];
+        if (dayStats[dayName]) {
+          dayStats[dayName].Revenue += o.totalAmount || 0;
+          dayStats[dayName].Orders += 1;
+        }
+      }
+    } catch (e) {}
+  });
+
   const chartData = [
-    { name: 'Mon', Revenue: 420, Orders: 18 },
-    { name: 'Tue', Revenue: 680, Orders: 25 },
-    { name: 'Wed', Revenue: 950, Orders: 38 },
-    { name: 'Thu', Revenue: 1200, Orders: 45 },
-    { name: 'Fri', Revenue: 1850, Orders: 62 },
-    { name: 'Sat', Revenue: 2100, Orders: 74 },
-    { name: 'Sun', Revenue: 2450, Orders: 89 },
+    { name: 'Mon', Revenue: Number(dayStats.Mon.Revenue.toFixed(2)), Orders: dayStats.Mon.Orders },
+    { name: 'Tue', Revenue: Number(dayStats.Tue.Revenue.toFixed(2)), Orders: dayStats.Tue.Orders },
+    { name: 'Wed', Revenue: Number(dayStats.Wed.Revenue.toFixed(2)), Orders: dayStats.Wed.Orders },
+    { name: 'Thu', Revenue: Number(dayStats.Thu.Revenue.toFixed(2)), Orders: dayStats.Thu.Orders },
+    { name: 'Fri', Revenue: Number(dayStats.Fri.Revenue.toFixed(2)), Orders: dayStats.Fri.Orders },
+    { name: 'Sat', Revenue: Number(dayStats.Sat.Revenue.toFixed(2)), Orders: dayStats.Sat.Orders },
+    { name: 'Sun', Revenue: Number(dayStats.Sun.Revenue.toFixed(2)), Orders: dayStats.Sun.Orders },
   ];
 
   // Package Form State
@@ -853,6 +878,13 @@ export const AdminDashboard: React.FC = () => {
                   >
                     <Send className="w-3.5 h-3.5" />
                     <span>Reply</span>
+                  </button>
+                  <button
+                    onClick={() => deleteComplaint(comp.id)}
+                    className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                    title="Delete Complaint"
+                  >
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
               </div>
