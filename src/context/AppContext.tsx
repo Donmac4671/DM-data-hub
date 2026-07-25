@@ -6,6 +6,15 @@ import {
   loginUserFromSupabase,
   fetchUsersFromSupabase,
   updateProfileInSupabase,
+  fetchOrdersFromSupabase,
+  createOrderInSupabase,
+  updateOrderStatusInSupabase,
+  fetchWebhooksFromSupabase,
+  insertWebhookInSupabase,
+  updateWebhookStatusInSupabase,
+  fetchClaimsFromSupabase,
+  createClaimInSupabase,
+  updateClaimInSupabase,
   isSupabaseConfigured,
 } from '../lib/supabase';
 import {
@@ -204,6 +213,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
       });
+
+      fetchOrdersFromSupabase().then(spOrders => {
+        if (spOrders.length > 0) {
+          setOrders(prev => {
+            const map = new Map<string, Order>();
+            prev.forEach(o => map.set(o.id, o));
+            spOrders.forEach(o => map.set(o.id, o));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            localStorage.setItem('dmh_orders', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      });
+
+      fetchWebhooksFromSupabase().then(spWhs => {
+        if (spWhs.length > 0) {
+          setWebhookLogs(prev => {
+            const map = new Map<string, SmsWebhookPayload>();
+            prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+            spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      });
+
+      fetchClaimsFromSupabase().then(spClaims => {
+        if (spClaims.length > 0) {
+          setClaims(prev => {
+            const map = new Map<string, PaymentClaim>();
+            prev.forEach(c => map.set(c.id, c));
+            spClaims.forEach(c => map.set(c.id, c));
+            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+            localStorage.setItem('dmh_claims', JSON.stringify(merged));
+            return merged;
+          });
+        }
+      });
     }
   }, []);
 
@@ -279,6 +327,56 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const pollInterval = setInterval(() => {
       handleSync();
+
+      if (isSupabaseConfigured) {
+        fetchOrdersFromSupabase().then(spOrders => {
+          if (spOrders.length > 0) {
+            setOrders(prev => {
+              const map = new Map<string, Order>();
+              prev.forEach(o => map.set(o.id, o));
+              spOrders.forEach(o => map.set(o.id, o));
+              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+                localStorage.setItem('dmh_orders', JSON.stringify(merged));
+                return merged;
+              }
+              return prev;
+            });
+          }
+        });
+
+        fetchWebhooksFromSupabase().then(spWhs => {
+          if (spWhs.length > 0) {
+            setWebhookLogs(prev => {
+              const map = new Map<string, SmsWebhookPayload>();
+              prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+              spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+              const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+                localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
+                return merged;
+              }
+              return prev;
+            });
+          }
+        });
+
+        fetchClaimsFromSupabase().then(spClaims => {
+          if (spClaims.length > 0) {
+            setClaims(prev => {
+              const map = new Map<string, PaymentClaim>();
+              prev.forEach(c => map.set(c.id, c));
+              spClaims.forEach(c => map.set(c.id, c));
+              const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+                localStorage.setItem('dmh_claims', JSON.stringify(merged));
+                return merged;
+              }
+              return prev;
+            });
+          }
+        });
+      }
 
       fetch('/api/webhook/sms')
         .then(res => res.json())
@@ -552,6 +650,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
       return next;
     });
+
+    if (isSupabaseConfigured) {
+      createOrderInSupabase(newOrder);
+    }
+
     clearCart();
 
     // Trigger Notification
@@ -570,11 +673,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateOrderStatus = (orderId: string, status: OrderStatus, failureReason?: string) => {
     setOrders(prev => {
-      const next = prev.map(o => (o.id === orderId ? { ...o, status, failureReason, completedAt: status === 'completed' ? new Date().toISOString() : o.completedAt } : o));
+      const next = prev.map(o => (o.id === orderId ? { ...o, status, failureReason, completedAt: status === 'completed' || status === 'delivered' ? new Date().toISOString() : o.completedAt } : o));
       localStorage.setItem('dmh_orders', JSON.stringify(next));
       setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
       return next;
     });
+
+    if (isSupabaseConfigured) {
+      updateOrderStatusInSupabase(orderId, status, failureReason);
+    }
+
     addAuditLog('UPDATE_ORDER_STATUS', `Order ${orderId} status set to ${status}`);
     showToast('Order Status Updated', `Order set to ${status.toUpperCase()}`, 'info');
   };
@@ -713,6 +821,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setWebhookLogs(prev => [newWebhook, ...prev]);
+    if (isSupabaseConfigured) {
+      insertWebhookInSupabase(newWebhook);
+    }
     addAuditLog('SMS_WEBHOOK_RECEIVED', `Logged unclaimed SMS webhook for Txn ID: ${momoTxnId}, GHS ${amount}, Network: ${network}`);
     showToast('SMS Webhook Logged', `Recorded Txn ID ${momoTxnId} (GHS ${amount.toFixed(2)}) as Unclaimed.`, 'success');
 
@@ -741,6 +852,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           w.id === matchingWebhook.id ? { ...w, status: 'claimed', claimedBy: claimedName } : w
         )
       );
+
+      if (isSupabaseConfigured) {
+        updateWebhookStatusInSupabase(matchingWebhook.momoTxnId, 'claimed', claimedName);
+      }
 
       // Credit user
       const updatedUser = { ...currentUser, walletBalance: newBal };
@@ -864,6 +979,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     setClaims(prev => [newClaim, ...prev]);
+    if (isSupabaseConfigured) {
+      createClaimInSupabase(newClaim);
+    }
 
     addNotification({
       userId: currentUser.id,
@@ -914,6 +1032,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setClaims(prev =>
       prev.map(c => (c.id === claimId ? { ...c, status, adminNotes: notes, processedAt: new Date().toISOString() } : c))
     );
+
+    if (isSupabaseConfigured) {
+      updateClaimInSupabase(claimId, status, notes);
+    }
 
     addAuditLog('PROCESS_CLAIM', `Claim ${claimId} marked as ${status}. Notes: ${notes || 'N/A'}`);
     showToast(`Claim ${status.toUpperCase()}`, `Payment claim ${status} successfully.`, status === 'approved' ? 'success' : 'error');

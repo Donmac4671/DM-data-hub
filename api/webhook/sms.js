@@ -1,6 +1,13 @@
 // Vercel Serverless Function Handler for SMS Webhooks
 // Path: /api/webhook/sms.js
 
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
 function extractWebhookData(body) {
   const rawSms = typeof body === 'string'
     ? body
@@ -100,6 +107,24 @@ export default async function handler(req, res) {
       senderPhone,
       receivedAt: new Date().toISOString()
     };
+
+    if (supabase && payload.momoTxnId) {
+      try {
+        await supabase.from('sms_webhooks').upsert([{
+          momo_txn_id: payload.momoTxnId,
+          amount: payload.amount,
+          network: payload.network,
+          status: 'unclaimed',
+          claimed_by: '-',
+          reference_code: payload.referenceCode || '',
+          raw_sms: payload.rawSms || '',
+          sender_phone: payload.senderPhone || '',
+          created_at: payload.receivedAt
+        }], { onConflict: 'momo_txn_id' });
+      } catch (dbErr) {
+        console.error('Supabase SMS webhook insert error:', dbErr);
+      }
+    }
 
     if (req.headers.accept && req.headers.accept.includes('application/json')) {
       return res.status(200).json({

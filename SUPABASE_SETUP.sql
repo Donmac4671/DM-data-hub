@@ -82,10 +82,27 @@ CREATE TABLE public.orders (
   order_number TEXT UNIQUE NOT NULL,
   user_id TEXT REFERENCES public.profiles(id) ON DELETE CASCADE,
   user_email TEXT NOT NULL,
+  user_name TEXT DEFAULT '',
   total_amount DECIMAL(10, 2) NOT NULL,
   status TEXT DEFAULT 'pending',
   recipient_phone TEXT NOT NULL DEFAULT '',
   items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  failure_reason TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+-- 8. CREATE SMS WEBHOOKS TABLE
+CREATE TABLE public.sms_webhooks (
+  id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  momo_txn_id TEXT UNIQUE NOT NULL,
+  amount DECIMAL(12, 2) NOT NULL,
+  network TEXT NOT NULL,
+  status TEXT DEFAULT 'unclaimed',
+  claimed_by TEXT DEFAULT '-',
+  reference_code TEXT DEFAULT '',
+  raw_sms TEXT DEFAULT '',
+  sender_phone TEXT DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -142,6 +159,7 @@ ALTER TABLE public.data_packages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pending_topups DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wallet_transactions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sms_webhooks DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_claims DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.announcements DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.complaints DISABLE ROW LEVEL SECURITY;

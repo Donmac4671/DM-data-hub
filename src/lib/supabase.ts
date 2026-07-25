@@ -170,3 +170,195 @@ export async function updateProfileInSupabase(profileIdOrEmail: string, updates:
     console.error('Error updating profile in Supabase:', err);
   }
 }
+
+// ==========================================
+// ORDERS SUPABASE INTEGRATION
+// ==========================================
+export async function fetchOrdersFromSupabase(): Promise<any[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.warn('Error fetching orders from Supabase:', error.message);
+      return [];
+    }
+    return (data || []).map(row => ({
+      id: row.id,
+      orderNumber: row.order_number,
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name || 'Customer',
+      totalAmount: Number(row.total_amount),
+      status: row.status,
+      recipientPhone: row.recipient_phone || '',
+      items: typeof row.items === 'string' ? JSON.parse(row.items) : (row.items || []),
+      failureReason: row.failure_reason || '',
+      paymentMethod: 'wallet',
+      createdAt: row.created_at,
+      completedAt: row.completed_at || undefined,
+    }));
+  } catch (err) {
+    console.error('Error in fetchOrdersFromSupabase:', err);
+    return [];
+  }
+}
+
+export async function createOrderInSupabase(order: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    const primaryPhone = order.recipientPhone || (order.items && order.items[0] ? order.items[0].recipientPhone : '');
+    const row = {
+      id: order.id,
+      order_number: order.orderNumber,
+      user_id: order.userId,
+      user_email: order.userEmail,
+      user_name: order.userName || '',
+      total_amount: order.totalAmount,
+      status: order.status,
+      recipient_phone: primaryPhone,
+      items: order.items,
+      failure_reason: order.failureReason || '',
+      created_at: order.createdAt || new Date().toISOString(),
+      completed_at: order.completedAt || null,
+    };
+    const { error } = await supabase.from('orders').insert([row]);
+    if (error) console.error('Error inserting order in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in createOrderInSupabase:', err);
+  }
+}
+
+export async function updateOrderStatusInSupabase(orderId: string, status: string, failureReason?: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const updates: any = {
+      status,
+      failure_reason: failureReason || '',
+    };
+    if (status === 'completed' || status === 'delivered') {
+      updates.completed_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from('orders').update(updates).eq('id', orderId);
+    if (error) console.error('Error updating order status in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in updateOrderStatusInSupabase:', err);
+  }
+}
+
+// ==========================================
+// SMS WEBHOOKS SUPABASE INTEGRATION
+// ==========================================
+export async function fetchWebhooksFromSupabase(): Promise<any[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('sms_webhooks').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.warn('Error fetching SMS webhooks from Supabase:', error.message);
+      return [];
+    }
+    return (data || []).map(row => ({
+      id: row.id,
+      momoTxnId: row.momo_txn_id,
+      amount: Number(row.amount),
+      network: row.network,
+      status: row.status || 'unclaimed',
+      claimedBy: row.claimed_by || '-',
+      referenceCode: row.reference_code || '',
+      rawSms: row.raw_sms || '',
+      senderPhone: row.sender_phone || '',
+      date: row.created_at || new Date().toISOString(),
+    }));
+  } catch (err) {
+    console.error('Error in fetchWebhooksFromSupabase:', err);
+    return [];
+  }
+}
+
+export async function insertWebhookInSupabase(wh: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      id: wh.id,
+      momo_txn_id: wh.momoTxnId,
+      amount: wh.amount,
+      network: wh.network,
+      status: wh.status || 'unclaimed',
+      claimed_by: wh.claimedBy || '-',
+      reference_code: wh.referenceCode || '',
+      raw_sms: wh.rawSms || '',
+      sender_phone: wh.senderPhone || '',
+      created_at: wh.date || new Date().toISOString(),
+    };
+    const { error } = await supabase.from('sms_webhooks').upsert([row], { onConflict: 'momo_txn_id' });
+    if (error) console.error('Error inserting webhook in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in insertWebhookInSupabase:', err);
+  }
+}
+
+export async function updateWebhookStatusInSupabase(momoTxnId: string, status: string, claimedBy: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('sms_webhooks').update({ status, claimed_by: claimedBy }).eq('momo_txn_id', momoTxnId);
+    if (error) console.error('Error updating webhook status in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in updateWebhookStatusInSupabase:', err);
+  }
+}
+
+// ==========================================
+// PAYMENT CLAIMS SUPABASE INTEGRATION
+// ==========================================
+export async function fetchClaimsFromSupabase(): Promise<any[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('payment_claims').select('*').order('created_at', { ascending: false });
+    if (error) return [];
+    return (data || []).map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name,
+      momoTxnId: row.momo_txn_id,
+      momoNumber: row.momo_number,
+      amount: Number(row.amount),
+      screenshotUrl: row.screenshot_url || '',
+      status: row.status,
+      adminNotes: row.admin_notes || '',
+      createdAt: row.created_at,
+    }));
+  } catch (err) {
+    return [];
+  }
+}
+
+export async function createClaimInSupabase(claim: any): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      id: claim.id,
+      user_id: claim.userId,
+      user_email: claim.userEmail,
+      user_name: claim.userName,
+      momo_txn_id: claim.momoTxnId,
+      momo_number: claim.momoNumber,
+      amount: claim.amount,
+      screenshot_url: claim.screenshotUrl || '',
+      status: claim.status || 'pending',
+      admin_notes: claim.adminNotes || '',
+      created_at: claim.createdAt || new Date().toISOString(),
+    };
+    await supabase.from('payment_claims').insert([row]);
+  } catch (err) {
+    console.error('Error creating claim in Supabase:', err);
+  }
+}
+
+export async function updateClaimInSupabase(claimId: string, status: string, adminNotes?: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from('payment_claims').update({ status, admin_notes: adminNotes || '' }).eq('id', claimId);
+  } catch (err) {
+    console.error('Error updating claim in Supabase:', err);
+  }
+}

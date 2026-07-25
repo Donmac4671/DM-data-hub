@@ -1,6 +1,12 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+const supabaseServer = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 interface ServerSmsWebhook {
   id: string;
@@ -181,6 +187,22 @@ async function startServer() {
       };
 
       serverWebhooks.unshift(newWebhook);
+
+      if (supabaseServer) {
+        supabaseServer.from('sms_webhooks').upsert([{
+          momo_txn_id: momoTxnId,
+          amount: amount,
+          network: effectiveNetwork,
+          status: 'unclaimed',
+          claimed_by: '-',
+          reference_code: referenceCode || '',
+          raw_sms: rawSms || '',
+          sender_phone: senderPhone || '',
+          created_at: newWebhook.date
+        }], { onConflict: 'momo_txn_id' }).then(({ error }) => {
+          if (error) console.error('Supabase server webhook insert error:', error.message);
+        });
+      }
 
       // Return simple OK status string for SMS forwarders, or JSON if requested
       if (req.headers.accept?.includes('application/json')) {
