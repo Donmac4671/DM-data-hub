@@ -163,19 +163,29 @@ async function handleAutoCredit(
   senderPhone,
   createdAt
 ) {
-  if (!supabase) {
-    console.log('❌ Supabase not configured, skipping auto-credit');
-    return;
-  }
-  
-  if (!referenceCode) {
-    console.log('⚠️ No reference code found, skipping auto-credit');
-    return;
-  }
+  // ... existing code ...
 
   const cleanRef = referenceCode.trim().toUpperCase();
   console.log(`🔍 ===== STARTING AUTO-CREDIT CHECK =====`);
   console.log(`🔍 Looking for pending top-up with reference: "${cleanRef}"`);
+
+  // === ADD THIS DEBUG CODE ===
+  console.log('🔍 Checking all pending top-ups in database...');
+  const { data: allPending, error: allErr } = await supabase
+    .from('pending_topups')
+    .select('reference_code, status, expires_at')
+    .eq('status', 'pending');
+  
+  if (allErr) {
+    console.error('❌ Error fetching all pending:', allErr);
+  } else {
+    console.log('📋 All pending references in DB:', allPending?.map(p => ({
+      ref: p.reference_code,
+      status: p.status,
+      expires: p.expires_at
+    })));
+  }
+  // === END DEBUG CODE ===
 
   try {
     // Find matching pending top-up
