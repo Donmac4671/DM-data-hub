@@ -5,16 +5,11 @@ import { Megaphone, X, Bell, ShieldAlert, CheckCircle2 } from 'lucide-react';
 export const AnnouncementModal: React.FC = () => {
   const { announcements, isAuthenticated } = useApp();
   const [activeAnn, setActiveAnn] = useState<any | null>(null);
-  const [dismissedIds, setDismissedIds] = useState<string[]>(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem('dmh_dismissed_announcements') || '[]');
-    } catch {
-      return [];
-    }
-  });
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
 
   useEffect(() => {
-    // Find active announcement that has not been dismissed in this session
+    // Find active announcement that has not been dismissed in this in-memory session
+    // Resetting/refreshing/re-logging-in will show the announcement again.
     const active = announcements.find(a => a.active && !dismissedIds.includes(a.id));
     setActiveAnn(active || null);
   }, [announcements, dismissedIds, isAuthenticated]);
@@ -24,7 +19,6 @@ export const AnnouncementModal: React.FC = () => {
   const handleDismiss = () => {
     const updated = [...dismissedIds, activeAnn.id];
     setDismissedIds(updated);
-    sessionStorage.setItem('dmh_dismissed_announcements', JSON.stringify(updated));
     setActiveAnn(null);
   };
 

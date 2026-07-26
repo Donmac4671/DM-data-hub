@@ -8,7 +8,7 @@ import { validateGhanaNetworkPhone } from '../lib/networkValidator';
 export const PackageCatalog: React.FC = () => {
   const { packages, favorites, toggleFavorite, addToCart, networks, showToast } = useApp();
 
-  const [selectedNetwork, setSelectedNetwork] = useState<NetworkId | 'all'>('all');
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkId>('mtn');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'default' | 'price_asc' | 'price_desc'>('default');
 
@@ -17,7 +17,7 @@ export const PackageCatalog: React.FC = () => {
 
   const filteredPackages = packages.filter(pkg => {
     if (pkg.status === 'hidden') return false;
-    if (selectedNetwork !== 'all' && pkg.network !== selectedNetwork) return false;
+    if (pkg.network !== selectedNetwork) return false;
     return matchDataPackage(pkg, searchQuery);
   });
 

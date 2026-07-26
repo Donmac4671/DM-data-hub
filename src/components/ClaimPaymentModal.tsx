@@ -32,23 +32,40 @@ export const ClaimPaymentModal: React.FC<ClaimPaymentModalProps> = ({
     const autoResult = claimPaymentWithTxnId(cleanTxnId);
 
     if (autoResult.success) {
+      // Validate that the matched transaction amount exactly matches the claimed amount (or close to within 0.01)
+      const matchedAmt = autoResult.amount || 0;
+      if (Math.abs(matchedAmt - parsedAmount) > 0.01) {
+        setClaimStatusMsg({
+          success: false,
+          message: `Transaction ID exists but the amount entered (GHS ${parsedAmount.toFixed(2)}) does not match the actual payment amount received.`,
+        });
+        setSubmitted(true);
+        return;
+      }
+
       setClaimStatusMsg({
         success: true,
         message: autoResult.message,
       });
     } else {
-      // 2. Submit payment claim with actual entered amount
-      submitPaymentClaim({
+      // 2. Submit payment claim with actual entered amount - This will do security check and trigger blocking in AppContext if invalid
+      const subResult = submitPaymentClaim({
         momoTxnId: cleanTxnId,
-        amount: parsedAmount > 0 ? parsedAmount : 50.00,
+        amount: parsedAmount,
         momoNumber: momoNumber.trim() || 'Submitted by Customer',
       });
 
-      const claimedVal = parsedAmount > 0 ? parsedAmount.toFixed(2) : '50.00';
-      setClaimStatusMsg({
-        success: true,
-        message: `Claim for GHS ${claimedVal} (Txn ID: ${cleanTxnId}) submitted successfully! Wallet credited/queued for verification.`,
-      });
+      if (subResult && !subResult.success) {
+        setClaimStatusMsg({
+          success: false,
+          message: subResult.message,
+        });
+      } else {
+        setClaimStatusMsg({
+          success: true,
+          message: `Claim for GHS ${parsedAmount.toFixed(2)} (Txn ID: ${cleanTxnId}) submitted successfully! Wallet credited instantly.`,
+        });
+      }
     }
 
     setSubmitted(true);
@@ -76,25 +93,45 @@ export const ClaimPaymentModal: React.FC<ClaimPaymentModalProps> = ({
         </div>
 
         {submitted ? (
-          <div className="text-center py-6 space-y-3">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-10 h-10" />
+          claimStatusMsg?.success ? (
+            <div className="text-center py-6 space-y-3">
+              <div className="w-16 h-16 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-10 h-10" />
+              </div>
+              <h4 className="text-lg font-black text-zinc-900 dark:text-zinc-100">Claim Approved</h4>
+              <p className="text-xs text-zinc-600 dark:text-zinc-300 max-w-sm mx-auto leading-relaxed">
+                {claimStatusMsg?.message}
+              </p>
+              <button
+                onClick={() => {
+                  setSubmitted(false);
+                  setMomoTxnId('');
+                  onClose();
+                }}
+                className="mt-4 px-6 py-2.5 bg-amber-500 text-black font-extrabold rounded-xl text-xs"
+              >
+                Done
+              </button>
             </div>
-            <h4 className="text-lg font-black text-zinc-900 dark:text-zinc-100">Claim Processed</h4>
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 max-w-sm mx-auto leading-relaxed">
-              {claimStatusMsg?.message}
-            </p>
-            <button
-              onClick={() => {
-                setSubmitted(false);
-                setMomoTxnId('');
-                onClose();
-              }}
-              className="mt-4 px-6 py-2.5 bg-amber-500 text-black font-extrabold rounded-xl text-xs"
-            >
-              Done
-            </button>
-          </div>
+          ) : (
+            <div className="text-center py-6 space-y-3 animate-in fade-in">
+              <div className="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto">
+                <AlertCircle className="w-10 h-10" />
+              </div>
+              <h4 className="text-lg font-black text-zinc-900 dark:text-zinc-100">Claim Denied</h4>
+              <p className="text-xs text-rose-600 dark:text-rose-400 max-w-sm mx-auto leading-relaxed font-bold">
+                {claimStatusMsg?.message}
+              </p>
+              <button
+                onClick={() => {
+                  setSubmitted(false);
+                }}
+                className="mt-4 px-6 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-extrabold rounded-xl text-xs"
+              >
+                Try Again
+              </button>
+            </div>
+          )
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
