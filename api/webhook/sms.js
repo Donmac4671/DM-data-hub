@@ -11,37 +11,33 @@ const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supaba
 function extractWebhookData(body) {
   if (!body) body = {};
 
-  // === FORCE REFERENCE EXTRACTION ===
-  let rawText = '';
-  if (typeof body === 'string') {
-    rawText = body;
-  } else if (body && typeof body === 'object') {
-    rawText = body.text || body.message || body.body || body.sms || body.content || 
+  let rawSms = typeof body === 'string' ? body : '';
+
+  if (!rawSms && typeof body === 'object') {
+    rawSms = body.text || body.message || body.body || body.sms || body.content ||
              body.msg || body.rawSms || body.smsContent || body.sms_body ||
              body.msg_body || body.notification || body.data || '';
-  }
-  
-  // Force extract DMH reference
-  if (rawText) {
-    const dmhMatch = rawText.match(/DMH-\d{6}/i);
-    if (dmhMatch) {
-      const ref = dmhMatch[0].toUpperCase();
-      body.referenceCode = ref;
-      body.reference = ref;
-      console.log('🎯 FORCE EXTRACTED REFERENCE:', ref);
-    } else {
-      // Try without dash: DMH123456
-      const dmhNoDash = rawText.match(/DMH\d{6}/i);
-      if (dmhNoDash) {
-        let ref = dmhNoDash[0].toUpperCase();
-        ref = ref.substring(0, 3) + '-' + ref.substring(3);
-        body.referenceCode = ref;
-        body.reference = ref;
-        console.log('🎯 FORCE EXTRACTED REFERENCE (no dash):', ref);
+
+    if (!rawSms) {
+      for (const val of Object.values(body)) {
+        if (typeof val === 'string' && val.length > 10) {
+          const lower = val.toLowerCase();
+          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || lower.includes('received') || lower.includes('payment')) {
+            rawSms = val;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!rawSms) {
+      try {
+        rawSms = JSON.stringify(body);
+      } catch (e) {
+        rawSms = '';
       }
     }
   }
-  // === END FORCE EXTRACTION ===
 
   const senderPhone = (typeof body === 'object' && (body.from || body.sender || body.phone || body.senderPhone || body.address)) || 'SMS Forwarder';
 
@@ -49,7 +45,6 @@ function extractWebhookData(body) {
   let amount = (typeof body === 'object' && body.amount) ? Number(body.amount) : null;
   let network = (typeof body === 'object' && body.network) || null;
   let referenceCode = (typeof body === 'object' && (body.reference || body.refCode)) || null;
-  let senderName = (typeof body === 'object' && (body.fromName || body.senderName || body.name)) || null;
 
   console.log('📝 Raw SMS Content:', rawSms);
 
@@ -105,51 +100,39 @@ function extractWebhookData(body) {
       }
     }
 
-    // 4. Sender Name extraction
-    if (!senderName) {
-      const nameMatch = rawSms.match(/from\s+([A-Z\s]+?)(?:\s+Current|\s+Balance|\.)/i);
-      if (nameMatch) {
-        senderName = nameMatch[1].trim();
-        console.log('📌 Extracted Sender Name:', senderName);
-      }
-    }
-
-    // 5. REFERENCE CODE extraction - SIMPLIFIED FIX
+    // 4. REFERENCE CODE extraction - SIMPLIFIED AND FIXED
     if (!referenceCode) {
-      console.log('🔍 Attempting to extract reference code from:', rawSms);
+      console.log('🔍 Attempting to extract reference code from raw SMS');
       
-      // Look for DMH-XXXXXX or DMHXXXXXX
-      const dmhMatch = rawSms.match(/(DMH[-]?\d{6})/i);
+      // Try to find DMH-XXXXXX pattern
+      const dmhMatch = rawSms.match(/DMH-\d{6}/i);
       if (dmhMatch) {
-        let code = dmhMatch[1].toUpperCase();
-        // Add dash if missing
-        if (!code.includes('-')) {
-          code = code.substring(0, 3) + '-' + code.substring(3);
-        }
-        referenceCode = code;
+        referenceCode = dmhMatch[0].toUpperCase();
         console.log('📌 Extracted DMH Reference Code:', referenceCode);
       }
       
-      // If no DMH found, try looking for "Reference: CODE"
+      // If not found, try DMH without dash (DMH123456)
+      if (!referenceCode) {
+        const dmhNoDashMatch = rawSms.match(/DMH\d{6}/i);
+        if (dmhNoDashMatch) {
+          let code = dmhNoDashMatch[0].toUpperCase();
+          // Add dash: DMH123456 -> DMH-123456
+          code = code.substring(0, 3) + '-' + code.substring(3);
+          referenceCode = code;
+          console.log('📌 Extracted DMH Reference Code (no dash):', referenceCode);
+        }
+      }
+      
+      // If still not found, try "Reference: CODE" pattern
       if (!referenceCode) {
         const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
         if (refMatch) {
           let code = refMatch[1].trim();
-          // Remove trailing punctuation
           code = code.replace(/[,;.:!?]$/, '');
           if (code.length >= 4) {
             referenceCode = code.toUpperCase();
             console.log('📌 Extracted Reference Code from "Reference:" pattern:', referenceCode);
           }
-        }
-      }
-      
-      // If still no reference, try looking for any DMH pattern
-      if (!referenceCode) {
-        const anyDmhMatch = rawSms.match(/DMH\s*(\d{6})/i);
-        if (anyDmhMatch) {
-          referenceCode = 'DMH-' + anyDmhMatch[1];
-          console.log('📌 Extracted DMH Reference Code from numbers:', referenceCode);
         }
       }
       
@@ -159,19 +142,17 @@ function extractWebhookData(body) {
     }
   }
 
-  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName };
+  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
   console.log('📊 Final Extraction Result:', {
     momoTxnId,
     amount,
     network,
     referenceCode,
-    senderName,
     senderPhone
   });
   
   return result;
 }
-// In api/webhook/sms.js - update the handleAutoCredit function
 
 async function handleAutoCredit(
   momoTxnId,
@@ -180,7 +161,6 @@ async function handleAutoCredit(
   referenceCode,
   rawSms,
   senderPhone,
-  senderName,
   createdAt
 ) {
   if (!supabase) {
@@ -195,170 +175,125 @@ async function handleAutoCredit(
 
   const cleanRef = referenceCode.trim().toUpperCase();
   console.log(`🔍 ===== STARTING AUTO-CREDIT CHECK =====`);
-  console.log(`🔍 Reference: "${cleanRef}"`);
+  console.log(`🔍 Looking for pending top-up with reference: "${cleanRef}"`);
 
   try {
-    // PRIMARY STRATEGY: Find by reference code in pending_topups
-    console.log(`🔍 Finding pending top-up by reference code`);
-    
-    // Check for pending top-up that is NOT expired
+    // Find matching pending top-up
     const { data: pendingData, error: pendingErr } = await supabase
       .from('pending_topups')
       .select('*')
       .eq('reference_code', cleanRef)
-      .eq('status', 'pending')
-      .gte('expires_at', new Date().toISOString()); // Only get non-expired ones
+      .eq('status', 'pending');
 
     if (pendingErr) {
       console.error('❌ Error fetching pending top-up:', pendingErr);
       return;
     }
 
-    // If found by reference, use that user
-    if (pendingData && pendingData.length > 0) {
-      console.log(`✅ Found pending top-up by reference code!`);
-      await processAutoCredit(pendingData[0], momoTxnId, amount, network, referenceCode, rawSms, senderPhone, createdAt);
+    if (!pendingData || pendingData.length === 0) {
+      console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
       return;
     }
 
-    // Check if the reference exists but is expired
-    const { data: expiredData, error: expiredErr } = await supabase
-      .from('pending_topups')
-      .select('*')
-      .eq('reference_code', cleanRef)
-      .eq('status', 'pending')
-      .lt('expires_at', new Date().toISOString());
-
-    if (expiredData && expiredData.length > 0) {
-      console.log(`⚠️ Found pending top-up but it has EXPIRED! Ref: ${cleanRef}`);
-      console.log(`⚠️ Expired at: ${new Date(expiredData[0].expires_at).toLocaleString()}`);
-      
-      // Update webhook status to indicate expired
-      await supabase
-        .from('sms_webhooks')
-        .update({
-          status: 'unclaimed',
-          claimed_by: 'EXPIRED - reference code expired',
-          reference_code: cleanRef
-        })
-        .eq('momo_txn_id', momoTxnId);
-      
-      return;
-    }
-
-    // No match found
-    console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
+    const matchReq = pendingData[0];
+    console.log('✅ Found matching pending top-up:', {
+      id: matchReq.id,
+      reference_code: matchReq.reference_code,
+      user_email: matchReq.user_email,
+      user_name: matchReq.user_name,
+      amount: matchReq.amount
+    });
     
-    // Update webhook status
+    const userEmail = matchReq.user_email;
+    const userName = matchReq.user_name || 'Customer';
+
+    // 2. Fetch target user profile
+    const { data: userData, error: userErr } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('email', userEmail.toLowerCase().trim());
+
+    if (userErr) {
+      console.error('❌ Error fetching user profile:', userErr);
+      return;
+    }
+
+    if (!userData || userData.length === 0) {
+      console.error(`❌ User profile not found for email: ${userEmail}`);
+      return;
+    }
+
+    const profile = userData[0];
+    const currentBalance = Number(profile.wallet_balance || 0);
+    const newBalance = Number((currentBalance + amount).toFixed(2));
+
+    console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
+
+    // 3. Update User Profile balance
+    const { error: updateErr } = await supabase
+      .from('profiles')
+      .update({ wallet_balance: newBalance })
+      .eq('id', profile.id);
+
+    if (updateErr) {
+      console.error('❌ Failed to update user profile balance:', updateErr.message);
+      return;
+    }
+
+    // 4. Update Pending Top-Up status
+    await supabase
+      .from('pending_topups')
+      .update({ 
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      })
+      .eq('id', matchReq.id);
+
+    // 5. Insert Wallet Transaction record
+    await supabase
+      .from('wallet_transactions')
+      .insert([{
+        user_id: profile.id,
+        amount: amount,
+        type: 'topup',
+        description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
+        reference_code: cleanRef,
+        momo_txn_id: momoTxnId,
+        balance_after: newBalance,
+        created_at: createdAt
+      }]);
+
+    // 6. Update Webhook record as claimed
+    const claimedString = `${userName} (${userEmail}) via Auto-Ref ${cleanRef}`;
     await supabase
       .from('sms_webhooks')
       .update({
-        status: 'unclaimed',
-        claimed_by: 'Manual review needed - no pending top-up or user found',
+        status: 'claimed',
+        claimed_by: claimedString,
         reference_code: cleanRef
       })
       .eq('momo_txn_id', momoTxnId);
 
+    // 7. Insert Payment Claim record as claimed
+    await supabase
+      .from('payment_claims')
+      .insert([{
+        user_id: profile.id,
+        user_email: userEmail,
+        user_name: userName,
+        momo_txn_id: momoTxnId,
+        momo_number: senderPhone || 'SMS Webhook',
+        amount: amount,
+        status: 'claimed',
+        admin_notes: `Auto-verified & claimed instantly via webhook with reference ${cleanRef}`,
+        created_at: createdAt
+      }]);
+
+    console.log(`✅✅✅ SUCCESS! Auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
   } catch (err) {
     console.error('❌ Error in handleAutoCredit:', err);
     console.error('❌ Stack trace:', err.stack);
   }
-}
-
-// Helper function to process auto-credit
-async function processAutoCredit(
-  pendingRecord,
-  momoTxnId,
-  amount,
-  network,
-  referenceCode,
-  rawSms,
-  senderPhone,
-  createdAt
-) {
-  const userEmail = pendingRecord.user_email;
-  const userName = pendingRecord.user_name || 'Customer';
-
-  console.log(`✅ Processing auto-credit for user: ${userEmail}`);
-
-  // Fetch user profile
-  const { data: userData, error: userErr } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('email', userEmail.toLowerCase().trim());
-
-  if (userErr || !userData || userData.length === 0) {
-    console.error(`❌ User profile not found for email: ${userEmail}`);
-    return;
-  }
-
-  const profile = userData[0];
-  const currentBalance = Number(profile.wallet_balance || 0);
-  const newBalance = Number((currentBalance + amount).toFixed(2));
-
-  console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
-
-  // Update User Profile balance
-  const { error: updateErr } = await supabase
-    .from('profiles')
-    .update({ wallet_balance: newBalance })
-    .eq('id', profile.id);
-
-  if (updateErr) {
-    console.error('❌ Failed to update user profile balance:', updateErr.message);
-    return;
-  }
-
-  // Update Pending Top-Up status
-  await supabase
-    .from('pending_topups')
-    .update({ 
-      status: 'completed',
-      completed_at: new Date().toISOString()
-    })
-    .eq('id', pendingRecord.id);
-
-  // Insert Wallet Transaction
-  await supabase
-    .from('wallet_transactions')
-    .insert([{
-      user_id: profile.id,
-      amount: amount,
-      type: 'topup',
-      description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${referenceCode})`,
-      reference_code: referenceCode,
-      momo_txn_id: momoTxnId,
-      balance_after: newBalance,
-      created_at: createdAt
-    }]);
-
-  // Update Webhook as claimed
-  const claimedString = `${userName} (${userEmail}) via Auto-Ref ${referenceCode}`;
-  await supabase
-    .from('sms_webhooks')
-    .update({
-      status: 'claimed',
-      claimed_by: claimedString,
-      reference_code: referenceCode
-    })
-    .eq('momo_txn_id', momoTxnId);
-
-  // Insert Payment Claim
-  await supabase
-    .from('payment_claims')
-    .insert([{
-      user_id: profile.id,
-      user_email: userEmail,
-      user_name: userName,
-      momo_txn_id: momoTxnId,
-      momo_number: senderPhone || 'SMS Webhook',
-      amount: amount,
-      status: 'claimed',
-      admin_notes: `Auto-verified & claimed instantly via webhook with reference ${referenceCode}`,
-      created_at: createdAt
-    }]);
-
-  console.log(`✅✅✅ SUCCESS! Auto-credited user ${userEmail} with GHS ${amount} via Ref ${referenceCode}`);
 }
 
 export default async function handler(req, res) {
@@ -379,44 +314,7 @@ export default async function handler(req, res) {
   try {
     const query = req.query || {};
 
-    // Handle GET with UUID (fetch specific webhook)
-    const urlParts = req.url.split('/');
-    const lastPart = urlParts[urlParts.length - 1];
-    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    
-    if (uuidPattern.test(lastPart) && req.method === 'GET') {
-      if (!supabase) {
-        return res.status(500).json({ error: 'Supabase not configured' });
-      }
-      
-      const { data, error } = await supabase
-        .from('sms_webhooks')
-        .select('*')
-        .eq('id', lastPart)
-        .single();
-      
-      if (error) {
-        return res.status(404).json({ error: 'Webhook not found' });
-      }
-      
-      return res.status(200).json({
-        success: true,
-        data: {
-          id: data.id,
-          momoTxnId: data.momo_txn_id,
-          amount: Number(data.amount),
-          network: data.network,
-          status: data.status || 'unclaimed',
-          claimedBy: data.claimed_by || '-',
-          referenceCode: data.reference_code || '',
-          rawSms: data.raw_sms || '',
-          senderPhone: data.sender_phone || '',
-          date: data.created_at
-        }
-      });
-    }
-
-    // Handle GET request to fetch all webhooks
+    // Check if this is a GET request to FETCH webhooks list
     const isFetchRequest = req.method === 'GET' && (
       query.action === 'fetch' ||
       (!query.text && !query.message && !query.sms && !query.body && !query.content && !query.momoTxnId && !query.rawSms && !query.msg)
@@ -444,11 +342,11 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, count: 0, data: [] });
     }
 
-    // Process incoming SMS Webhook (POST)
+    // Process incoming SMS Webhook (POST or GET with parameters)
     const sourceData = req.method === 'GET' ? req.query : (req.body || {});
     console.log('📨 Webhook received data:', JSON.stringify(sourceData, null, 2));
 
-    const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName } = extractWebhookData(sourceData);
+    const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
 
     const payload = {
       momoTxnId: momoTxnId || `SMS-${Date.now()}`,
@@ -457,7 +355,6 @@ export default async function handler(req, res) {
       referenceCode: referenceCode || '',
       rawSms: rawSms || JSON.stringify(sourceData),
       senderPhone: senderPhone || 'SMS Forwarder',
-      senderName: senderName || '',
       receivedAt: new Date().toISOString()
     };
 
@@ -491,7 +388,6 @@ export default async function handler(req, res) {
             payload.referenceCode,
             payload.rawSms,
             payload.senderPhone,
-            payload.senderName,
             payload.receivedAt
           );
         }
