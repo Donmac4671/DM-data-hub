@@ -57,8 +57,8 @@ import {
 } from '../data/initialData';
 
 interface AppContextType {
-  currentUser: UserProfile;
-  setCurrentUser: (user: UserProfile) => void;
+  currentUser: UserProfile | null; // FIXED: Allow null
+  setCurrentUser: (user: UserProfile | null) => void;
   updateUserProfile: (updates: Partial<UserProfile>) => void;
   activeRole: Role;
   setActiveRole: (role: Role) => void;
@@ -195,10 +195,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     getStorageItem('dmh_users', [MOCK_ADMIN_USER])
   );
 
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
+  // FIXED: Initialize currentUser as null instead of always having a user
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     const saved = getStorageItem<UserProfile | null>('dmh_user', null);
     if (saved) return saved;
-    return MOCK_ADMIN_USER;
+    return null; // Return null instead of MOCK_ADMIN_USER
   });
 
   const [activeRole, setActiveRole] = useState<Role>(() =>
@@ -294,46 +295,52 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
+  // FIXED: Only sync currentUser to localStorage if not null
   useEffect(() => {
-    localStorage.setItem('dmh_user', JSON.stringify(currentUser));
+    if (currentUser) {
+      localStorage.setItem('dmh_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('dmh_user');
+    }
   }, [currentUser]);
 
-  // Ensure currentUser wallet balance and profile details are ALWAYS in sync with usersList
+  // FIXED: Ensure currentUser wallet balance and profile details are ALWAYS in sync with usersList
   useEffect(() => {
-    if (currentUser && currentUser.id) {
-      const matched = usersList.find(
-        u => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()
-      );
+    if (!currentUser || !currentUser.id) return;
 
-      if (matched && matched.isBlocked) {
-        // Instantly force logout on blocked account!
-        setCurrentUser(MOCK_ADMIN_USER);
-        setActiveRole('customer');
-        setIsAuthenticated(false);
-        localStorage.removeItem('dmh_auth');
-        localStorage.setItem('dmh_role', 'customer');
-        showToast('Account Suspended', 'This account has been blocked or suspended by the administrator.', 'error');
-        return;
-      }
+    const matched = usersList.find(
+      u => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()
+    );
 
-      if (
-        matched &&
-        (matched.walletBalance !== currentUser.walletBalance ||
-          (matched.ordersCount ?? 0) !== (currentUser.ordersCount ?? 0) ||
-          (matched.totalSpent ?? 0) !== (currentUser.totalSpent ?? 0) ||
-          !!matched.isBlocked !== !!currentUser.isBlocked ||
-          matched.role !== currentUser.role)
-      ) {
-        const synced = {
-          ...currentUser,
-          ...matched,
-          ordersCount: matched.ordersCount ?? currentUser.ordersCount ?? 0,
-          totalSpent: matched.totalSpent ?? currentUser.totalSpent ?? 0,
-          isBlocked: !!matched.isBlocked,
-        };
-        setCurrentUser(synced);
-        localStorage.setItem('dmh_user', JSON.stringify(synced));
-      }
+    if (matched && matched.isBlocked) {
+      // Instantly force logout on blocked account!
+      setCurrentUser(null);
+      setActiveRole('customer');
+      setIsAuthenticated(false);
+      localStorage.removeItem('dmh_auth');
+      localStorage.removeItem('dmh_user');
+      localStorage.setItem('dmh_role', 'customer');
+      showToast('Account Suspended', 'This account has been blocked or suspended by the administrator.', 'error');
+      return;
+    }
+
+    if (
+      matched &&
+      (matched.walletBalance !== currentUser.walletBalance ||
+        (matched.ordersCount ?? 0) !== (currentUser.ordersCount ?? 0) ||
+        (matched.totalSpent ?? 0) !== (currentUser.totalSpent ?? 0) ||
+        !!matched.isBlocked !== !!currentUser.isBlocked ||
+        matched.role !== currentUser.role)
+    ) {
+      const synced = {
+        ...currentUser,
+        ...matched,
+        ordersCount: matched.ordersCount ?? currentUser.ordersCount ?? 0,
+        totalSpent: matched.totalSpent ?? currentUser.totalSpent ?? 0,
+        isBlocked: !!matched.isBlocked,
+      };
+      setCurrentUser(synced);
+      localStorage.setItem('dmh_user', JSON.stringify(synced));
     }
   }, [usersList, currentUser]);
 
@@ -520,7 +527,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [isAuthenticated]);
 
   const updateUserProfile = (updates: Partial<UserProfile>) => {
+    if (!currentUser) return;
     setCurrentUser(prev => {
+      if (!prev) return prev;
       const updated = { ...prev, ...updates };
       setUsersList(users => users.map(u => u.id === updated.id ? updated : u));
       if (isSupabaseConfigured) {
@@ -533,6 +542,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const logout = () => {
     setIsAuthenticated(false);
+    setCurrentUser(null); // FIXED: Set to null instead of MOCK_ADMIN_USER
     localStorage.removeItem('dmh_auth');
     localStorage.removeItem('dmh_user');
     showToast('Logged Out', 'You have been signed out of your account.', 'info');
@@ -551,7 +561,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setPackages(INITIAL_PACKAGES);
     setNetworks(INITIAL_NETWORKS);
     setUsersList([MOCK_ADMIN_USER]);
-    setCurrentUser(MOCK_ADMIN_USER);
+    setCurrentUser(null); // FIXED: Set to null
     setActiveRole('customer');
     setIsAuthenticated(false);
     showToast('System Reset', 'All transactions, orders, and cache reset. Please sign in or register.', 'info');
@@ -562,10 +572,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (role === 'admin') {
       const adminInList = usersList.find(u => u.role === 'admin' || u.email === 'donmacdatahub@gmail.com') || MOCK_ADMIN_USER;
       setCurrentUser(adminInList);
+      setIsAuthenticated(true);
       showToast('Switched to Admin Role', `Logged in as ${adminInList.email}`, 'info');
     } else {
       const custInList = usersList.find(u => u.role === 'customer' && u.id !== MOCK_ADMIN_USER.id) || MOCK_CUSTOMER_USER;
       setCurrentUser(custInList);
+      setIsAuthenticated(true);
       showToast('Switched to Customer View', `Viewing as ${custInList.fullName}`, 'info');
     }
   };
@@ -705,6 +717,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     paymentMethod: 'wallet' | 'direct_momo' = 'wallet',
     momoTxnId?: string
   ): { success: boolean; message: string; order?: Order } => {
+    if (!currentUser) {
+      return { success: false, message: 'Please log in to place an order.' };
+    }
     if (currentUser.isBlocked) {
       return { success: false, message: 'This account has been suspended or blocked by admin. Please contact support.' };
     }
@@ -781,7 +796,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       userName: currentUser.fullName,
       items: [...cart],
       totalAmount: total,
-      status: 'pending', // Delivery takes 3-30 minutes, pending admin processing
+      status: 'pending',
       paymentMethod: 'wallet',
       momoTransactionId: momoTxnId,
       createdAt: new Date().toISOString(),
@@ -835,983 +850,4 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast('Items Added to Cart', `${order.items.length} item(s) from #${order.orderNumber} reordered.`, 'info');
   };
 
-  const claimOrderRefund = (orderId: string) => {
-    const order = orders.find(o => o.id === orderId);
-    if (!order) return;
-    if (order.status !== 'failed') {
-      showToast('Refund Error', 'Only failed orders can be refunded.', 'error');
-      return;
-    }
-
-    const refundAmt = order.totalAmount;
-    const newBal = Number((currentUser.walletBalance + refundAmt).toFixed(2));
-
-    // Update current user balance
-    const updatedUser = { ...currentUser, walletBalance: newBal };
-    setCurrentUser(updatedUser);
-    setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-
-    if (isSupabaseConfigured) {
-      updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
-    }
-
-    // Update order status to 'refunded'
-    setOrders(prev => {
-      const next = prev.map(o => o.id === orderId ? { ...o, status: 'refunded' as any } : o);
-      localStorage.setItem('dmh_orders', JSON.stringify(next));
-      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
-      return next;
-    });
-
-    if (isSupabaseConfigured) {
-      updateOrderStatusInSupabase(orderId, 'refunded' as any);
-    }
-
-    // Record wallet transaction
-    const tx: WalletTransaction = {
-      id: `tx-${Date.now()}`,
-      userId: currentUser.id,
-      amount: refundAmt,
-      type: 'refund' as any,
-      description: `Refund for Failed Order #${order.orderNumber}`,
-      momoTxnId: '',
-      balanceAfter: newBal,
-      createdAt: new Date().toISOString(),
-    };
-    setWalletTransactions(prev => [tx, ...prev]);
-
-    addNotification({
-      userId: currentUser.id,
-      title: '↩️ Order Refunded Successfully!',
-      message: `Failed Order #${order.orderNumber} was refunded. GHS ${refundAmt.toFixed(2)} was credited to your wallet.`,
-      type: 'wallet',
-    });
-
-    addAuditLog('ORDER_REFUND_CLAIMED', `User refunded GHS ${refundAmt} for failed order #${order.orderNumber}`);
-    showToast('Refund Processed!', `GHS ${refundAmt.toFixed(2)} refunded to your wallet!`, 'success');
-  };
-
-  // Top Up Reference Generation
-  const [pendingTopUpRequests, setPendingTopUpRequests] = useState<PendingTopUpRequest[]>(() =>
-    getStorageItem('dmh_pending_topups', [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_pending_topups', JSON.stringify(pendingTopUpRequests));
-  }, [pendingTopUpRequests]);
-
-  const generateTopUpReference = (amount: number, momoNumber: string): PendingTopUpRequest => {
-    const refCode = `DMH-${Math.floor(100000 + Math.random() * 900000)}`;
-    const expires = new Date(Date.now() + 30 * 60000).toISOString(); // 30 mins expiry
-
-    const newReq: PendingTopUpRequest = {
-      id: `topup-req-${Date.now()}`,
-      userId: currentUser.id,
-      userEmail: currentUser.email,
-      userName: currentUser.fullName,
-      referenceCode: refCode,
-      amount,
-      momoNumberToPay: '0549358359', // Donmac Official MoMo Merchant
-      expiresAt: expires,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    };
-
-    setPendingTopUpRequests(prev => [newReq, ...prev]);
-    addAuditLog('GENERATE_TOPUP_REF', `Ref ${refCode} for GHS ${amount} generated for ${currentUser.email}`);
-    return newReq;
-  };
-
-  // SMS Webhook & Auto-Crediting Engine
-  const [webhookLogs, setWebhookLogs] = useState<SmsWebhookPayload[]>(() =>
-    getStorageItem('dmh_webhooks', [
-      {
-        id: 'wh-demo-1',
-        momoTxnId: '30291049182',
-        amount: 50.00,
-        network: 'MTN',
-        status: 'unclaimed',
-        claimedBy: '-',
-        date: new Date().toISOString(),
-        rawSms: 'Payment received for GHS 50.00 from 0241234567. Financial Transaction Id: 30291049182. Current Balance: GHS 150.00.',
-        senderPhone: '0241234567'
-      },
-      {
-        id: 'wh-demo-2',
-        momoTxnId: '88102948102',
-        amount: 100.00,
-        network: 'Telecel',
-        status: 'unclaimed',
-        claimedBy: '-',
-        date: new Date(Date.now() - 3600000).toISOString(),
-        rawSms: 'Cash Deposit received: GHS 100.00. Txn ID: 88102948102.',
-        senderPhone: '0200000000'
-      }
-    ])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_webhooks', JSON.stringify(webhookLogs));
-  }, [webhookLogs]);
-
-  const deleteSmsWebhook = (webhookId: string) => {
-    const found = webhookLogs.find(w => w.id === webhookId);
-    setWebhookLogs(prev => prev.filter(w => w.id !== webhookId));
-
-    // Call server DELETE endpoint
-    fetch(`/api/webhook/sms/${webhookId}`, { method: 'DELETE' })
-      .catch(err => console.error('Error calling webhook delete endpoint:', err));
-
-    if (found && isSupabaseConfigured) {
-      deleteWebhookFromSupabase(found.momoTxnId);
-    }
-
-    addAuditLog('DELETE_SMS_WEBHOOK', `Deleted webhook entry ${webhookId}`);
-    showToast('Webhook Deleted', 'Webhook record removed from system.', 'info');
-  };
-
-  const processSmsWebhook = (payload: {
-    senderPhone?: string;
-    network?: 'MTN' | 'Telecel' | 'AirtelTigo';
-    amount?: number;
-    momoTxnId?: string;
-    referenceCode?: string;
-    rawSms?: string;
-  }): { success: boolean; message: string; webhook?: SmsWebhookPayload } => {
-    let momoTxnId = (payload.momoTxnId || '').trim();
-    let amount = payload.amount || 0;
-    let network: 'MTN' | 'Telecel' | 'AirtelTigo' = payload.network || 'MTN';
-    const rawSms = payload.rawSms || '';
-
-    // Extract fields from raw SMS body if provided
-    if (rawSms) {
-      const txnMatch = rawSms.match(/(?:Transaction ID|Txn ID|Transaction Id|Financial Transaction Id|Ref|ID):\s*([0-9A-Za-z]+)/i) ||
-                       rawSms.match(/(?:id|ref):\s*([0-9]{8,14})/i) ||
-                       rawSms.match(/\b([0-9]{9,12})\b/);
-      if (txnMatch && !momoTxnId) {
-        momoTxnId = txnMatch[1];
-      }
-
-      const amountMatch = rawSms.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          rawSms.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC)/i);
-      if (amountMatch && !amount) {
-        amount = parseFloat(amountMatch[1]);
-      }
-
-      if (rawSms.toLowerCase().includes('telecel') || rawSms.toLowerCase().includes('vodafone')) {
-        network = 'Telecel';
-      } else if (rawSms.toLowerCase().includes('airtel') || rawSms.toLowerCase().includes('tigo') || rawSms.toLowerCase().includes('at money')) {
-        network = 'AirtelTigo';
-      } else {
-        network = 'MTN';
-      }
-    }
-
-    if (!momoTxnId) {
-      return { success: false, message: 'Could not extract valid MoMo Transaction ID from payload.' };
-    }
-
-    // Check duplicate
-    const existing = webhookLogs.find(w => w.momoTxnId.toLowerCase() === momoTxnId.toLowerCase());
-    if (existing) {
-      return { success: false, message: `Transaction ID ${momoTxnId} is already logged in the system (${existing.status}).` };
-    }
-
-    const newWebhook: SmsWebhookPayload = {
-      id: `wh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      momoTxnId,
-      amount: amount || 0,
-      network,
-      status: 'unclaimed',
-      claimedBy: '-',
-      date: new Date().toISOString(),
-      rawSms,
-      senderPhone: payload.senderPhone || 'SMS Forwarder',
-    };
-
-    setWebhookLogs(prev => [newWebhook, ...prev]);
-    if (isSupabaseConfigured) {
-      insertWebhookInSupabase(newWebhook);
-    }
-    addAuditLog('SMS_WEBHOOK_RECEIVED', `Logged unclaimed SMS webhook for Txn ID: ${momoTxnId}, GHS ${amount}, Network: ${network}`);
-    showToast('SMS Webhook Logged', `Recorded Txn ID ${momoTxnId} (GHS ${amount.toFixed(2)}) as Unclaimed.`, 'success');
-
-    return { success: true, message: 'SMS webhook processed successfully.', webhook: newWebhook };
-  };
-
-  const claimPaymentWithTxnId = (momoTxnId: string): { success: boolean; message: string; amount?: number } => {
-    const cleanTxnId = momoTxnId.trim().toUpperCase();
-    if (!cleanTxnId) {
-      return { success: false, message: 'Please enter a valid MoMo Transaction ID.' };
-    }
-
-    // Search unclaimed webhook logs
-    const matchingWebhook = webhookLogs.find(
-      w => w.momoTxnId.trim().toUpperCase() === cleanTxnId && w.status === 'unclaimed'
-    );
-
-    if (matchingWebhook) {
-      const creditAmount = matchingWebhook.amount;
-      const newBal = Number((currentUser.walletBalance + creditAmount).toFixed(2));
-      const claimedName = `${currentUser.fullName} (${currentUser.email})`;
-
-      // Update webhook status to claimed
-      setWebhookLogs(prev =>
-        prev.map(w =>
-          w.id === matchingWebhook.id ? { ...w, status: 'claimed', claimedBy: claimedName } : w
-        )
-      );
-
-      if (isSupabaseConfigured) {
-        updateWebhookStatusInSupabase(matchingWebhook.momoTxnId, 'claimed', claimedName);
-      }
-
-      // Credit user
-      const updatedUser = { ...currentUser, walletBalance: newBal };
-      setCurrentUser(updatedUser);
-      setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-
-      if (isSupabaseConfigured) {
-        updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
-      }
-
-      // Record wallet transaction
-      const tx: WalletTransaction = {
-        id: `tx-${Date.now()}`,
-        userId: currentUser.id,
-        amount: creditAmount,
-        type: 'topup',
-        description: `Auto-Credited via MoMo Txn ID ${cleanTxnId}`,
-        momoTxnId: cleanTxnId,
-        balanceAfter: newBal,
-        createdAt: new Date().toISOString(),
-      };
-      setWalletTransactions(prev => [tx, ...prev]);
-
-      // Trigger notification
-      addNotification({
-        userId: currentUser.id,
-        title: '🎉 Payment Claimed & Wallet Credited!',
-        message: `Transaction ID ${cleanTxnId} was verified! GHS ${creditAmount.toFixed(2)} added to your wallet. New balance: GHS ${newBal.toFixed(2)}.`,
-        type: 'wallet',
-      });
-
-      addAuditLog('CLAIM_PAYMENT_AUTO_SUCCESS', `User ${currentUser.email} claimed Txn ${cleanTxnId} for GHS ${creditAmount}`);
-      showToast('Payment Claimed!', `GHS ${creditAmount.toFixed(2)} auto-credited to your wallet!`, 'success');
-
-      return {
-        success: true,
-        message: `Successfully claimed GHS ${creditAmount.toFixed(2)}! Your wallet balance is now GHS ${newBal.toFixed(2)}.`,
-        amount: creditAmount
-      };
-    }
-
-    return {
-      success: false,
-      message: 'No matching unclaimed transaction found with this MoMo Txn ID. Please make sure you paid to Donmac MoMo (0549358359) or submit a claim with payment details.',
-    };
-  };
-
-  // Brute force claims tracking
-  const [failedClaimsCount, setFailedClaimsCount] = useState<Record<string, number>>({});
-
-  // Claims
-  const [claims, setClaims] = useState<PaymentClaim[]>(() =>
-    getStorageItem('dmh_claims', [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_claims', JSON.stringify(claims));
-  }, [claims]);
-
-  const submitPaymentClaim = (claimData: {
-    referenceCode?: string;
-    momoTxnId: string;
-    amount: number;
-    momoNumber: string;
-    screenshotUrl?: string;
-  }): { success: boolean; message: string } | void => {
-    const cleanTxn = claimData.momoTxnId.trim().toUpperCase();
-    const cleanRef = claimData.referenceCode?.trim().toUpperCase();
-
-    // Secure Matching: transaction ID AND amount must match an unclaimed webhook log exactly
-    const matchedLog = webhookLogs.find(
-      w => w.momoTxnId.toUpperCase() === cleanTxn &&
-           Number(w.amount) === Number(claimData.amount) &&
-           w.status === 'unclaimed'
-    );
-
-    let matchedPending = null;
-    if (cleanRef) {
-      matchedPending = pendingTopUpRequests.find(
-        r => r.referenceCode.toUpperCase() === cleanRef && r.status === 'pending'
-      );
-    }
-
-    // Check expiry for matchedPending (30-minute expiry constraint)
-    if (matchedPending) {
-      const isExpired = new Date().getTime() > new Date(matchedPending.expiresAt).getTime();
-      if (isExpired) {
-        matchedPending = null;
-      }
-    }
-
-    const isAutoCredible = !!matchedLog || !!matchedPending;
-    let finalAmount = claimData.amount;
-
-    if (matchedLog) {
-      finalAmount = matchedLog.amount;
-    } else if (matchedPending) {
-      finalAmount = matchedPending.amount;
-    }
-
-    if (isAutoCredible) {
-      // Reset failed attempts upon successful claim
-      setFailedClaimsCount(prev => ({ ...prev, [currentUser.id]: 0 }));
-
-      // Auto-approve and credit wallet instantly
-      const newBal = Number((currentUser.walletBalance + finalAmount).toFixed(2));
-      const updatedUser = { ...currentUser, walletBalance: newBal };
-      setCurrentUser(updatedUser);
-      setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-
-      if (isSupabaseConfigured) {
-        updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
-      }
-
-      if (matchedLog) {
-        const claimedStr = `${currentUser.fullName} (${currentUser.email})`;
-        setWebhookLogs(prev =>
-          prev.map(w => w.id === matchedLog.id ? { ...w, status: 'claimed', claimedBy: claimedStr } : w)
-        );
-        if (isSupabaseConfigured) {
-          updateWebhookStatusInSupabase(matchedLog.momoTxnId, 'claimed', claimedStr);
-        }
-      }
-
-      if (matchedPending) {
-        setPendingTopUpRequests(prev =>
-          prev.map(r => (r.id === matchedPending.id ? { ...r, status: 'completed' } : r))
-        );
-      }
-
-      const tx: WalletTransaction = {
-        id: `tx-${Date.now()}`,
-        userId: currentUser.id,
-        amount: finalAmount,
-        type: 'topup',
-        description: `Instant Verified MoMo Claim (Txn: ${claimData.momoTxnId})`,
-        referenceCode: claimData.referenceCode,
-        momoTxnId: claimData.momoTxnId,
-        balanceAfter: newBal,
-        createdAt: new Date().toISOString(),
-      };
-      setWalletTransactions(prev => [tx, ...prev]);
-
-      const newClaim: PaymentClaim = {
-        id: `claim-${Date.now()}`,
-        userId: currentUser.id,
-        userEmail: currentUser.email,
-        userName: currentUser.fullName,
-        ...claimData,
-        amount: finalAmount,
-        status: 'claimed',
-        createdAt: new Date().toISOString(),
-        processedAt: new Date().toISOString(),
-        adminNotes: 'Auto-verified & credited instantly via MoMo matcher',
-      };
-
-      setClaims(prev => [newClaim, ...prev]);
-      if (isSupabaseConfigured) {
-        createClaimInSupabase(newClaim);
-      }
-
-      addNotification({
-        userId: currentUser.id,
-        title: '✅ MoMo Payment Verified & Credited!',
-        message: `Your payment of GHS ${finalAmount.toFixed(2)} (Txn ID: ${claimData.momoTxnId}) was matched and credited to your wallet instantly!`,
-        type: 'wallet',
-      });
-
-      addAuditLog('AUTO_CLAIM_APPROVED', `Instant claim verified for GHS ${finalAmount}. MoMo Txn: ${claimData.momoTxnId}`);
-      showToast('Payment Verified!', `GHS ${finalAmount.toFixed(2)} credited to your wallet instantly!`, 'success');
-      return { success: true, message: `Successfully claimed GHS ${finalAmount.toFixed(2)}!` };
-    } else {
-      // Secure protection against brute-force invalid claims
-      const currentFailures = (failedClaimsCount[currentUser.id] || 0) + 1;
-      setFailedClaimsCount(prev => ({ ...prev, [currentUser.id]: currentFailures }));
-
-      if (currentFailures >= 3) {
-        // Block the user instantly in database & force logout
-        toggleBlockUser(currentUser.id);
-        return {
-          success: false,
-          message: 'This account has been blocked or suspended due to too many invalid payment claim attempts.',
-        };
-      }
-
-      return {
-        success: false,
-        message: `No matching payment was found for Transaction ID ${cleanTxn} and GHS ${claimData.amount.toFixed(2)}. (Attempt ${currentFailures} of 3 before account block).`,
-      };
-    }
-  };
-
-  const processClaim = (claimId: string, status: ClaimStatus, notes?: string) => {
-    const claim = claims.find(c => c.id === claimId);
-    if (!claim) return;
-
-    const isClaiming = status === 'claimed' || status === 'approved';
-    const wasAlreadyClaimed = claim.status === 'claimed' || claim.status === 'approved';
-
-    if (isClaiming && !wasAlreadyClaimed) {
-      const creditAmt = claim.amount;
-      const targetUser = usersList.find(u => u.id === claim.userId) || currentUser;
-      const newBal = targetUser.walletBalance + creditAmt;
-      const updatedTarget = { ...targetUser, walletBalance: newBal };
-
-      if (claim.userId === currentUser.id) {
-        setCurrentUser(updatedTarget);
-      }
-      setUsersList(prev => prev.map(u => u.id === claim.userId ? updatedTarget : u));
-
-      const tx: WalletTransaction = {
-        id: `tx-${Date.now()}`,
-        userId: claim.userId,
-        amount: creditAmt,
-        type: 'topup',
-        description: `Verified Payment Claim (MoMo Txn: ${claim.momoTxnId})`,
-        momoTxnId: claim.momoTxnId,
-        balanceAfter: newBal,
-        createdAt: new Date().toISOString(),
-      };
-      setWalletTransactions(prev => [tx, ...prev]);
-
-      addNotification({
-        userId: claim.userId,
-        title: '✅ Payment Claim Verified!',
-        message: `Your payment claim for GHS ${claim.amount.toFixed(2)} (Txn: ${claim.momoTxnId}) was successfully verified and claimed to your wallet.`,
-        type: 'wallet',
-      });
-    }
-
-    setClaims(prev =>
-      prev.map(c => (c.id === claimId ? { ...c, status, adminNotes: notes, processedAt: new Date().toISOString() } : c))
-    );
-
-    if (isSupabaseConfigured) {
-      updateClaimInSupabase(claimId, status, notes);
-    }
-
-    addAuditLog('PROCESS_CLAIM', `Claim ${claimId} marked as ${status}. Notes: ${notes || 'N/A'}`);
-    showToast(`Claim ${status.toUpperCase()}`, `Payment claim ${status} successfully.`, isClaiming ? 'success' : 'error');
-  };
-
-  // Users List & Management
-  const registerUser = async (candidate: UserProfile, password?: string): Promise<UserProfile> => {
-    let finalUser: UserProfile = {
-      ...candidate,
-      passwordHash: password || candidate.password || 'user123',
-    };
-
-    if (isSupabaseConfigured) {
-      finalUser = await registerUserInSupabase(candidate, password);
-    }
-
-    setUsersList(prev => {
-      const idx = prev.findIndex(u => u.email.toLowerCase() === finalUser.email.toLowerCase());
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = finalUser;
-        return copy;
-      }
-      return [finalUser, ...prev];
-    });
-
-    setCurrentUser(finalUser);
-    setActiveRole(finalUser.role);
-    setIsAuthenticated(true);
-    showToast('Account Registered', `Welcome to Donmac Data Hub, ${finalUser.fullName}!`, 'success');
-    return finalUser;
-  };
-
-  const loginUser = async (email: string, password?: string): Promise<UserProfile> => {
-    let user: UserProfile;
-
-    if (isSupabaseConfigured) {
-      user = await loginUserFromSupabase(email, password);
-    } else {
-      const cleanEmail = email.toLowerCase().trim();
-      const found = usersList.find(u => u.email.toLowerCase() === cleanEmail);
-
-      if (!found) {
-        throw new Error(`No account found with email ${cleanEmail}. Please register an account first.`);
-      }
-
-      if (found.isBlocked) {
-        throw new Error('This account has been suspended or blocked by admin. Please contact support.');
-      }
-
-      if (password && found.passwordHash && found.passwordHash !== password) {
-        throw new Error('Incorrect password. Please check your credentials and try again.');
-      }
-
-      user = found;
-    }
-
-    setCurrentUser(user);
-    setActiveRole(user.role);
-    setIsAuthenticated(true);
-    showToast('Welcome Back', `Signed in as ${user.fullName}`, 'success');
-    return user;
-  };
-
-  const loginOrRegisterUser = async (candidate: UserProfile) => {
-    try {
-      const existing = usersList.find(u => u.email.toLowerCase() === candidate.email.toLowerCase());
-      if (existing) {
-        await loginUser(candidate.email, candidate.password);
-      } else {
-        await registerUser(candidate, candidate.password);
-      }
-    } catch (err: any) {
-      showToast('Authentication Error', err.message || 'Failed to authenticate', 'error');
-    }
-  };
-
-  const toggleBlockUser = (userId: string) => {
-    const target = usersList.find(u => u.id === userId);
-    const newBlocked = target ? !target.isBlocked : true;
-    setUsersList(prev =>
-      prev.map(u => (u.id === userId ? { ...u, isBlocked: newBlocked } : u))
-    );
-    if (isSupabaseConfigured) {
-      updateProfileInSupabase(userId, { isBlocked: newBlocked });
-    }
-    addAuditLog('TOGGLE_BLOCK_USER', `Toggled block status for user ID ${userId}`);
-    showToast('User Status Updated', 'User block status toggled.', 'info');
-  };
-
-  const deleteUser = (userId: string) => {
-    setUsersList(prev => prev.filter(u => u.id !== userId));
-    if (isSupabaseConfigured) {
-      deleteUserFromSupabase(userId);
-    }
-    addAuditLog('DELETE_USER', `Deleted user ID ${userId}`);
-    showToast('User Deleted', 'User removed from system.', 'info');
-  };
-
-  const toggleUserRole = (userId: string) => {
-    const target = usersList.find(u => u.id === userId);
-    const newRole: Role = target?.role === 'admin' ? 'customer' : 'admin';
-    setUsersList(prev =>
-      prev.map(u => (u.id === userId ? { ...u, role: newRole } : u))
-    );
-    if (isSupabaseConfigured) {
-      updateProfileInSupabase(userId, { role: newRole });
-    }
-    addAuditLog('TOGGLE_USER_ROLE', `Toggled admin role for user ID ${userId}`);
-    showToast('Role Updated', 'User role updated successfully.', 'success');
-  };
-
-  const creditUserWallet = (userId: string, amount: number, reason: string) => {
-    // Locate target user from usersList or fallback to currentUser
-    const targetUser = usersList.find(u => u.id === userId || u.email.toLowerCase() === userId.toLowerCase());
-    const currentBal = targetUser
-      ? targetUser.walletBalance
-      : (currentUser.id === userId || currentUser.email.toLowerCase() === userId.toLowerCase()
-        ? currentUser.walletBalance
-        : 0);
-
-    const newBal = Math.max(0, Number((currentBal + amount).toFixed(2)));
-    const targetId = targetUser ? targetUser.id : userId;
-    const targetEmail = targetUser ? targetUser.email : (currentUser.id === userId ? currentUser.email : '');
-
-    // Update usersList immediately & sync localStorage
-    const nextUsers = usersList.map(u => {
-      if (u.id === targetId || (targetEmail && u.email.toLowerCase() === targetEmail.toLowerCase())) {
-        return { ...u, walletBalance: newBal };
-      }
-      return u;
-    });
-    setUsersList(nextUsers);
-    localStorage.setItem('dmh_users', JSON.stringify(nextUsers));
-
-    // Update currentUser immediately if target is logged in user
-    if (currentUser.id === targetId || (targetEmail && currentUser.email.toLowerCase() === targetEmail.toLowerCase())) {
-      const nextUser = { ...currentUser, walletBalance: newBal };
-      setCurrentUser(nextUser);
-      localStorage.setItem('dmh_user', JSON.stringify(nextUser));
-    }
-
-    // Dispatch sync event for immediate cross-tab update
-    window.dispatchEvent(new Event('storage'));
-
-    // Update Supabase immediately with the calculated new balance
-    if (isSupabaseConfigured) {
-      updateProfileInSupabase(targetId, { walletBalance: newBal, email: targetEmail });
-    }
-
-    // Record wallet transaction
-    const tx: WalletTransaction = {
-      id: `tx-${Date.now()}`,
-      userId: targetId,
-      amount,
-      type: amount >= 0 ? 'admin_credit' : 'admin_debit',
-      description: `Admin Action: ${reason}`,
-      balanceAfter: newBal,
-      createdAt: new Date().toISOString(),
-    };
-    setWalletTransactions(prev => {
-      const nextTx = [tx, ...prev];
-      localStorage.setItem('dmh_wallet_tx', JSON.stringify(nextTx));
-      return nextTx;
-    });
-
-    // Send notification to user
-    addNotification({
-      userId: targetId,
-      title: amount >= 0 ? '💰 Wallet Credited!' : '💸 Wallet Debited',
-      message: `Your wallet was ${amount >= 0 ? 'credited with' : 'debited by'} GHS ${Math.abs(amount).toFixed(2)}. Reason: ${reason}. New Balance: GHS ${newBal.toFixed(2)}.`,
-      type: 'wallet',
-    });
-
-    addAuditLog('CREDIT_USER_WALLET', `GHS ${amount} adjusted for user ${targetId}. Reason: ${reason}`);
-    playSuccessChime();
-    showToast(
-      amount >= 0 ? 'Wallet Credited' : 'Wallet Debited',
-      `GHS ${Math.abs(amount).toFixed(2)} ${amount >= 0 ? 'credited to' : 'debited from'} user. New Balance: GHS ${newBal.toFixed(2)}.`,
-      'success'
-    );
-  };
-
-  // Manual Adjust Wallet
-  const manualAdjustWallet = (userId: string, amount: number, reason: string) => {
-    creditUserWallet(userId, amount, reason);
-  };
-
-  // Complaints
-  const [complaints, setComplaints] = useState<Complaint[]>(() =>
-    getStorageItem('dmh_complaints', [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_complaints', JSON.stringify(complaints));
-  }, [complaints]);
-
-  const submitComplaint = (
-    subject: string,
-    message: string,
-    orderNumber?: string,
-    momoTxnId?: string,
-    screenshotUrl?: string
-  ) => {
-    if (currentUser.isBlocked) {
-      showToast('Account Blocked', 'This account has been suspended or blocked by admin.', 'error');
-      return;
-    }
-    const newComp: Complaint = {
-      id: `comp-${Date.now()}`,
-      userId: currentUser.id,
-      userEmail: currentUser.email,
-      userName: currentUser.fullName,
-      subject,
-      orderNumber,
-      momoTxnId,
-      status: 'open',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      messages: [
-        {
-          id: `msg-${Date.now()}`,
-          senderRole: activeRole,
-          senderName: currentUser.fullName,
-          message,
-          screenshotUrl,
-          createdAt: new Date().toISOString(),
-        }
-      ]
-    };
-
-    setComplaints(prev => {
-      const next = [newComp, ...prev];
-      localStorage.setItem('dmh_complaints', JSON.stringify(next));
-      return next;
-    });
-
-    if (isSupabaseConfigured) {
-      // Add a message property dynamically for Supabase API which maps message
-      createComplaintInSupabase({ ...newComp, message });
-    }
-
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
-    showToast('Complaint Submitted', 'Our support team will respond shortly.', 'success');
-  };
-
-  const replyToComplaint = (complaintId: string, message: string) => {
-    let updatedComplaint: Complaint | null = null;
-    setComplaints(prev => {
-      const next = prev.map(c => {
-        if (c.id === complaintId) {
-          const newMsg = {
-            id: `msg-${Date.now()}`,
-            senderRole: activeRole,
-            senderName: activeRole === 'admin' ? 'Donmac Support' : currentUser.fullName,
-            message,
-            createdAt: new Date().toISOString(),
-          };
-          const updated = {
-            ...c,
-            status: activeRole === 'admin' ? 'in_progress' : c.status,
-            updatedAt: new Date().toISOString(),
-            messages: [...c.messages, newMsg],
-          };
-          updatedComplaint = updated as Complaint;
-          return updated;
-        }
-        return c;
-      });
-      localStorage.setItem('dmh_complaints', JSON.stringify(next));
-      return next;
-    });
-
-    if (isSupabaseConfigured && updatedComplaint) {
-      updateComplaintInSupabase(updatedComplaint);
-    }
-
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
-    showToast('Reply Sent', 'Your message has been posted.', 'info');
-  };
-
-  const updateComplaintStatus = (complaintId: string, status: Complaint['status']) => {
-    let updatedComplaint: Complaint | null = null;
-    setComplaints(prev => {
-      const next = prev.map(c => {
-        if (c.id === complaintId) {
-          const updated = { ...c, status, updatedAt: new Date().toISOString() };
-          updatedComplaint = updated;
-          return updated;
-        }
-        return c;
-      });
-      localStorage.setItem('dmh_complaints', JSON.stringify(next));
-      return next;
-    });
-
-    if (isSupabaseConfigured && updatedComplaint) {
-      updateComplaintInSupabase(updatedComplaint);
-    }
-
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
-    showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
-  };
-
-  const deleteComplaint = (complaintId: string) => {
-    setComplaints(prev => {
-      const next = prev.filter(c => c.id !== complaintId);
-      localStorage.setItem('dmh_complaints', JSON.stringify(next));
-      return next;
-    });
-
-    if (isSupabaseConfigured) {
-      deleteComplaintFromSupabase(complaintId);
-    }
-
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
-    showToast('Complaint Deleted', 'Support ticket removed.', 'info');
-  };
-
-  // Announcements
-  const [announcements, setAnnouncements] = useState<Announcement[]>(() =>
-    getStorageItem('dmh_announcements', INITIAL_ANNOUNCEMENTS)
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_announcements', JSON.stringify(announcements));
-  }, [announcements]);
-
-  const addAnnouncement = (ann: Omit<Announcement, 'id' | 'createdAt'>) => {
-    const newAnn: Announcement = {
-      ...ann,
-      id: `ann-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-    };
-    setAnnouncements(prev => [newAnn, ...prev]);
-    if (isSupabaseConfigured) {
-      upsertAnnouncementInSupabase(newAnn);
-    }
-    addAuditLog('ADD_ANNOUNCEMENT', `Posted broadcast: ${ann.title}`);
-    showToast('Broadcast Posted', 'All users will see this update.', 'success');
-  };
-
-  const toggleAnnouncement = (id: string, active: boolean) => {
-    setAnnouncements(prev => {
-      const updated = prev.map(a => {
-        if (a.id === id) {
-          const fullAnn = { ...a, active };
-          if (isSupabaseConfigured) {
-            upsertAnnouncementInSupabase(fullAnn);
-          }
-          return fullAnn;
-        }
-        return a;
-      });
-      return updated;
-    });
-  };
-
-  const deleteAnnouncement = (id: string) => {
-    setAnnouncements(prev => prev.filter(a => a.id !== id));
-    if (isSupabaseConfigured) {
-      deleteAnnouncementFromSupabase(id);
-    }
-  };
-
-  // Notifications
-  const [notifications, setNotifications] = useState<AppNotification[]>(() =>
-    getStorageItem('dmh_notifications', [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  const addNotification = (notif: Omit<AppNotification, 'id' | 'read' | 'createdAt'>) => {
-    const newNotif: AppNotification = {
-      ...notif,
-      id: `notif-${Date.now()}`,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications(prev => [newNotif, ...prev]);
-    playNotificationSound();
-  };
-
-  const markNotificationAsRead = (id: string) => {
-    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
-  };
-
-  const clearAllNotifications = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
-
-  const unreadNotificationsCount = notifications.filter(n => !n.read).length;
-
-  // Audit Logs
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() =>
-    getStorageItem('dmh_audit_logs', [])
-  );
-
-  useEffect(() => {
-    localStorage.setItem('dmh_audit_logs', JSON.stringify(auditLogs));
-  }, [auditLogs]);
-
-  const addAuditLog = (action: string, details: string) => {
-    const newLog: AuditLog = {
-      id: `audit-${Date.now()}`,
-      actorEmail: currentUser.email,
-      actorRole: activeRole,
-      action,
-      details,
-      ipAddress: '102.176.54.12',
-      createdAt: new Date().toISOString(),
-    };
-    setAuditLogs(prev => [newLog, ...prev]);
-  };
-
-  // Universal Search
-  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
-
-  // Toast
-  const [toastMessage, setToastMessage] = useState<{ title: string; desc?: string; type: 'success' | 'error' | 'info' } | null>(null);
-
-  const showToast = (title: string, desc?: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToastMessage({ title, desc, type });
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
-  };
-
-  return (
-    <AppContext.Provider
-      value={{
-        currentUser,
-        setCurrentUser,
-        updateUserProfile,
-        activeRole,
-        setActiveRole,
-        switchRole,
-        isAuthenticated,
-        setIsAuthenticated,
-        logout,
-        resetEverything,
-        theme,
-        toggleTheme,
-        networks,
-        packages,
-        toggleNetworkStatus,
-        addPackage,
-        updatePackage,
-        deletePackage,
-        favorites,
-        toggleFavorite,
-        cart,
-        addToCart,
-        removeFromCart,
-        clearCart,
-        orders,
-        placeOrder,
-        updateOrderStatus,
-        reorderOrder,
-        claimOrderRefund,
-        walletTransactions,
-        pendingTopUpRequests,
-        generateTopUpReference,
-        webhookLogs,
-        processSmsWebhook,
-        deleteSmsWebhook,
-        claimPaymentWithTxnId,
-        claims,
-        submitPaymentClaim,
-        processClaim,
-        manualAdjustWallet,
-        usersList,
-        setUsersList,
-        registerUser,
-        loginUser,
-        loginOrRegisterUser,
-        toggleBlockUser,
-        deleteUser,
-        toggleUserRole,
-        creditUserWallet,
-        complaints,
-        submitComplaint,
-        replyToComplaint,
-        updateComplaintStatus,
-        deleteComplaint,
-        announcements,
-        addAnnouncement,
-        toggleAnnouncement,
-        deleteAnnouncement,
-        notifications,
-        markNotificationAsRead,
-        clearAllNotifications,
-        unreadNotificationsCount,
-        auditLogs,
-        isSupabaseConnected: isSupabaseConfigured,
-        isSearchOpen,
-        setIsSearchOpen,
-        toastMessage,
-        showToast,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
-  );
-};
-
-export const useApp = () => {
-  const context = useContext(AppContext);
-  if (!context) throw new Error('useApp must be used within AppProvider');
-  return context;
-};
+  const claimOrderRefund = (orderId:
