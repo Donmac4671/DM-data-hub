@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { PendingTopUpRequest } from '../types';
 import {
@@ -6,19 +6,11 @@ import {
   Wallet,
   Copy,
   Check,
-  Zap,
   ArrowRight,
-  ShieldCheck,
   CheckCircle2,
   Smartphone
 } from 'lucide-react';
-// FIXED: Use the correct path based on your file structure
-// Option A: If supabaseClient.ts is in src/
 import { createPendingTopUpInSupabase } from '../lib/supabase';
-// Option B: If supabaseClient.ts is in src/lib/
-// import { createPendingTopUpInSupabase } from '../lib/supabaseClient';
-// Option C: If supabaseClient.ts is in src/utils/
-// import { createPendingTopUpInSupabase } from '../utils/supabaseClient';
 
 interface TopUpModalProps {
   isOpen: boolean;
@@ -26,7 +18,7 @@ interface TopUpModalProps {
 }
 
 export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
-  const { generateTopUpReference, user } = useApp();
+  const { generateTopUpReference, user: contextUser, isAuthenticated } = useApp();
 
   const [activeStep, setActiveStep] = useState<'amount' | 'instructions'>('amount');
   const [amountInput, setAmountInput] = useState<number>(50);
@@ -35,8 +27,42 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+
+  // Debug: Log user state
+  useEffect(() => {
+    console.log('🔍 TopUpModal - User from context:', contextUser);
+    console.log('🔍 TopUpModal - Is authenticated:', isAuthenticated);
+    setIsCheckingAuth(false);
+  }, [contextUser, isAuthenticated]);
 
   if (!isOpen) return null;
+
+  // Get user from context or localStorage fallback
+  const getUser = () => {
+    // First try context
+    if (contextUser) {
+      console.log('✅ User found in context');
+      return contextUser;
+    }
+
+    // Fallback: try localStorage
+    try {
+      const savedUser = localStorage.getItem('dmh_user');
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        console.log('✅ User found in localStorage fallback');
+        return parsedUser;
+      }
+    } catch (e) {
+      console.error('Error reading user from localStorage:', e);
+    }
+
+    console.log('❌ No user found');
+    return null;
+  };
+
+  const user = getUser();
 
   const copyToClipboard = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text);
@@ -46,13 +72,18 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
 
   const handleGenerateRef = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (amountInput < 1) {
-      setError('Please enter a valid amount (minimum GHS 1.00)');
+    
+    // Check if user is logged in
+    if (!user) {
+      setError('Please log in to top up your wallet');
+      console.error('❌ No user found');
       return;
     }
 
-    if (!user) {
-      setError('Please log in to top up your wallet');
+    console.log('✅ User found:', user.email, user.fullName);
+
+    if (amountInput < 1) {
+      setError('Please enter a valid amount (minimum GHS 1.00)');
       return;
     }
 
@@ -62,6 +93,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
     try {
       // Step 1: Generate reference code
       const req = generateTopUpReference(amountInput, momoNumberInput);
+      console.log('📝 Generated reference:', req);
       
       // Step 2: Save to Supabase
       await createPendingTopUpInSupabase(
@@ -71,16 +103,53 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
         user.fullName || 'Customer'
       );
 
+      console.log('✅ Pending top-up saved to Supabase');
+
       // Step 3: Update local state
       setPendingReq(req);
       setActiveStep('instructions');
     } catch (err: any) {
-      console.error('Error generating top-up reference:', err);
+      console.error('❌ Error generating top-up reference:', err);
       setError(err.message || 'Failed to generate reference. Please try again.');
     } finally {
       setIsGenerating(false);
     }
   };
+
+  // Show loading state while checking auth
+  if (isCheckingAuth) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
+          <p className="text-zinc-600 dark:text-zinc-400">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login required if no user
+  if (!user) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 text-center">
+          <div className="text-amber-500 mb-4">
+            <Wallet className="w-16 h-16 mx-auto" />
+          </div>
+          <h3 className="text-xl font-bold mb-2 text-zinc-900 dark:text-zinc-100">Login Required</h3>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
+            You need to be logged in to top up your wallet.
+          </p>
+          <button
+            onClick={onClose}
+            className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl transition-all"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -93,7 +162,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h3 className="font-extrabold text-base text-zinc-900 dark:text-zinc-100">Wallet Top-Up</h3>
-              <p className="text-xs text-zinc-500">Instant Mobile Money Wallet Funding</p>
+              <p className="text-xs text-zinc-500">
+                Welcome, {user.fullName || user.email}
+              </p>
             </div>
           </div>
           <button
@@ -200,7 +271,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
 
             <button
               type="submit"
-              disabled={isGenerating}
+              disabled={isGenerating || !user}
               className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-2xl transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isGenerating ? (
@@ -208,6 +279,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                   <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
                   <span>Generating Reference...</span>
                 </>
+              ) : !user ? (
+                <span>Please Log In First</span>
               ) : (
                 <>
                   <span>Generate Payment Reference</span>
