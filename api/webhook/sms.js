@@ -1,4 +1,6 @@
-// api/webhook/sms.js
+// Vercel Serverless Function Handler for SMS Webhooks
+// Path: /api/webhook/sms.js
+
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
@@ -43,6 +45,7 @@ function extractWebhookData(body) {
   let amount = (typeof body === 'object' && body.amount) ? Number(body.amount) : null;
   let network = (typeof body === 'object' && body.network) || null;
   let referenceCode = (typeof body === 'object' && (body.reference || body.refCode)) || null;
+  let senderName = (typeof body === 'object' && (body.fromName || body.senderName || body.name)) || null;
 
   console.log('📝 Raw SMS Content:', rawSms);
 
@@ -98,7 +101,16 @@ function extractWebhookData(body) {
       }
     }
 
-    // 4. REFERENCE CODE extraction - DMH-XXXXXX format
+    // 4. Sender Name extraction
+    if (!senderName) {
+      const nameMatch = rawSms.match(/from\s+([A-Z\s]+?)(?:\s+Current|\s+Balance|\.)/i);
+      if (nameMatch) {
+        senderName = nameMatch[1].trim();
+        console.log('📌 Extracted Sender Name:', senderName);
+      }
+    }
+
+    // 5. REFERENCE CODE extraction - DMH-XXXXXX format
     if (!referenceCode) {
       // Priority 1: DMH-XXXXXX format
       const dmhMatch = rawSms.match(/\b(DMH-\d{6})\b/i);
@@ -121,7 +133,6 @@ function extractWebhookData(body) {
           if (match) {
             let code = match[1].trim();
             code = code.replace(/[,;.:!?]$/, '');
-            // Skip if it's just a number (transaction ID)
             if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
               referenceCode = code.toUpperCase();
               console.log('📌 Extracted Reference Code:', referenceCode);
@@ -133,12 +144,13 @@ function extractWebhookData(body) {
     }
   }
 
-  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName };
   console.log('📊 Final Extraction Result:', {
     momoTxnId,
     amount,
     network,
     referenceCode,
+    senderName,
     senderPhone
   });
   
@@ -152,6 +164,7 @@ async function handleAutoCredit(
   referenceCode,
   rawSms,
   senderPhone,
+  senderName,
   createdAt
 ) {
   if (!supabase) {
@@ -166,11 +179,12 @@ async function handleAutoCredit(
 
   const cleanRef = referenceCode.trim().toUpperCase();
   console.log(`🔍 ===== STARTING AUTO-CREDIT CHECK =====`);
-  console.log(`🔍 Looking for pending top-up with reference: "${cleanRef}"`);
+  console.log(`🔍 Reference: "${cleanRef}"`);
+  console.log(`🔍 Sender: "${senderName}" (${senderPhone})`);
 
   try {
-    // Strategy 1: Try exact match
-    console.log(`🔍 Strategy 1: Exact match for "${cleanRef}"`);
+    // PRIMARY STRATEGY: Find by reference code in pending_topups
+    console.log(`🔍 Strategy 1: Finding pending top-up by reference code`);
     let { data: pendingData, error: pendingErr } = await supabase
       .from('pending_topups')
       .select('*')
@@ -181,163 +195,190 @@ async function handleAutoCredit(
       console.error('❌ Error fetching pending top-up:', pendingErr);
     }
 
-    // Strategy 2: Try case-insensitive
-    if (!pendingData || pendingData.length === 0) {
-      console.log(`🔍 Strategy 2: Case-insensitive match for "${cleanRef}"`);
-      const { data: ilikeData, error: ilikeErr } = await supabase
-        .from('pending_topups')
-        .select('*')
-        .ilike('reference_code', cleanRef)
-        .eq('status', 'pending');
-
-      if (!ilikeErr && ilikeData && ilikeData.length > 0) {
-        pendingData = ilikeData;
-        console.log(`✅ Found ${ilikeData.length} match(es) using ILIKE`);
-      }
-    }
-
-    // Strategy 3: Check if reference exists but has different case
-    if (!pendingData || pendingData.length === 0) {
-      console.log(`🔍 Strategy 3: Check if reference exists with any case`);
-      // Get all pending and check manually
-      const { data: allPending, error: allErr } = await supabase
-        .from('pending_topups')
-        .select('*')
-        .eq('status', 'pending');
-
-      if (!allErr && allPending) {
-        const match = allPending.find(p => 
-          p.reference_code && p.reference_code.toUpperCase() === cleanRef
-        );
-        if (match) {
-          pendingData = [match];
-          console.log(`✅ Found case-insensitive match: ${match.reference_code}`);
-        }
-      }
-    }
-
-    // Strategy 4: Try partial match with numeric part
-    if (!pendingData || pendingData.length === 0) {
-      const numericPart = cleanRef.replace(/[^0-9]/g, '');
-      if (numericPart.length >= 4) {
-        console.log(`🔍 Strategy 4: Partial match with "${numericPart}"`);
-        const { data: partialData, error: partialErr } = await supabase
-          .from('pending_topups')
-          .select('*')
-          .ilike('reference_code', `%${numericPart}%`)
-          .eq('status', 'pending');
-
-        if (!partialErr && partialData && partialData.length > 0) {
-          pendingData = partialData;
-          console.log(`✅ Found ${partialData.length} match(es) using partial match`);
-        }
-      }
-    }
-
-    if (!pendingData || pendingData.length === 0) {
-      console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
-      
-      // Debug: Show all pending references
-      const { data: allPending } = await supabase
-        .from('pending_topups')
-        .select('reference_code, status, user_email')
-        .eq('status', 'pending');
-      
-      console.log('📋 All pending references in DB:', allPending?.map(p => p.reference_code) || []);
+    // If found by reference, use that user
+    if (pendingData && pendingData.length > 0) {
+      console.log(`✅ Found pending top-up by reference code!`);
+      await processAutoCredit(pendingData[0], momoTxnId, amount, network, referenceCode, rawSms, senderPhone, createdAt);
       return;
     }
 
-    // Process the match
-    const matchReq = pendingData[0];
-    console.log('✅ Found matching pending top-up:', {
-      id: matchReq.id,
-      reference_code: matchReq.reference_code,
-      user_email: matchReq.user_email,
-      user_name: matchReq.user_name,
-      amount: matchReq.amount,
-      status: matchReq.status
-    });
+    // FALLBACK STRATEGY 1: Try to find user by phone number
+    console.log(`🔍 Strategy 2: No pending top-up found. Looking for user by phone number: "${senderPhone}"`);
     
-    const userEmail = matchReq.user_email;
-    const userName = matchReq.user_name || 'Customer';
+    let userProfile = null;
+    
+    if (senderPhone && senderPhone.trim().length > 0) {
+      const cleanPhone = senderPhone.replace(/\s/g, '').replace(/^0/, '233');
+      const { data: phoneMatch, error: phoneErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .or(`phone_number.ilike.%${cleanPhone}%,momo_number.ilike.%${cleanPhone}%`);
 
-    // Fetch user profile
-    const { data: userData, error: userErr } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('email', userEmail.toLowerCase().trim());
+      if (!phoneErr && phoneMatch && phoneMatch.length > 0) {
+        userProfile = phoneMatch[0];
+        console.log(`✅ Found user by phone number: ${userProfile.full_name} (${userProfile.email})`);
+      }
+    }
 
-    if (userErr || !userData || userData.length === 0) {
-      console.error(`❌ User profile not found for email: ${userEmail}`);
+    // FALLBACK STRATEGY 2: Try to find user by sender name
+    if (!userProfile && senderName && senderName.trim().length > 0) {
+      console.log(`🔍 Strategy 3: Looking for user by sender name: "${senderName}"`);
+      const { data: nameMatch, error: nameErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('full_name', `%${senderName.trim()}%`);
+
+      if (!nameErr && nameMatch && nameMatch.length > 0) {
+        userProfile = nameMatch[0];
+        console.log(`✅ Found user by sender name: ${userProfile.full_name} (${userProfile.email})`);
+      }
+    }
+
+    // If found by sender info, create a pending top-up and credit
+    if (userProfile) {
+      console.log(`💰 Found user: ${userProfile.full_name} (${userProfile.email})`);
+      console.log(`🔄 Creating pending top-up for this user...`);
+      
+      // Create a pending top-up record for this user
+      const { data: newPending, error: createErr } = await supabase
+        .from('pending_topups')
+        .insert([{
+          reference_code: cleanRef,
+          amount: amount,
+          user_email: userProfile.email,
+          user_name: userProfile.full_name,
+          status: 'pending',
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+
+      if (createErr) {
+        console.error('❌ Failed to create pending top-up:', createErr);
+        return;
+      }
+
+      console.log(`✅ Created pending top-up for user: ${userProfile.email}`);
+      
+      // Now process the credit
+      await processAutoCredit(newPending, momoTxnId, amount, network, referenceCode, rawSms, senderPhone, createdAt);
       return;
     }
 
-    const profile = userData[0];
-    const currentBalance = Number(profile.wallet_balance || 0);
-    const newBalance = Number((currentBalance + amount).toFixed(2));
-
-    console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
-
-    // Update User Profile balance
-    await supabase
-      .from('profiles')
-      .update({ wallet_balance: newBalance })
-      .eq('id', profile.id);
-
-    // Update Pending Top-Up status
-    await supabase
-      .from('pending_topups')
-      .update({ 
-        status: 'completed',
-        completed_at: new Date().toISOString()
-      })
-      .eq('id', matchReq.id);
-
-    // Insert Wallet Transaction
-    await supabase
-      .from('wallet_transactions')
-      .insert([{
-        user_id: profile.id,
-        amount: amount,
-        type: 'topup',
-        description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
-        reference_code: cleanRef,
-        momo_txn_id: momoTxnId,
-        balance_after: newBalance,
-        created_at: createdAt
-      }]);
-
-    // Update Webhook as claimed
-    const claimedString = `${userName} (${userEmail}) via Auto-Ref ${cleanRef}`;
+    // No match found at all
+    console.log(`❌ No user found to credit. Reference: ${cleanRef}, Sender: ${senderName || senderPhone}`);
+    console.log(`⚠️ Webhook saved as 'unclaimed' - manual review required`);
+    
+    // Update webhook status to indicate manual review needed
     await supabase
       .from('sms_webhooks')
       .update({
-        status: 'claimed',
-        claimed_by: claimedString,
+        status: 'unclaimed',
+        claimed_by: 'Manual review needed - no pending top-up or user found',
         reference_code: cleanRef
       })
       .eq('momo_txn_id', momoTxnId);
 
-    // Insert Payment Claim
-    await supabase
-      .from('payment_claims')
-      .insert([{
-        user_id: profile.id,
-        user_email: userEmail,
-        user_name: userName,
-        momo_txn_id: momoTxnId,
-        momo_number: senderPhone || 'SMS Webhook',
-        amount: amount,
-        status: 'claimed',
-        admin_notes: `Auto-verified & claimed instantly via webhook with reference ${cleanRef}`,
-        created_at: createdAt
-      }]);
-
-    console.log(`✅✅✅ SUCCESS! Auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
   } catch (err) {
     console.error('❌ Error in handleAutoCredit:', err);
     console.error('❌ Stack trace:', err.stack);
   }
+}
+
+// Helper function to process auto-credit
+async function processAutoCredit(
+  pendingRecord,
+  momoTxnId,
+  amount,
+  network,
+  referenceCode,
+  rawSms,
+  senderPhone,
+  createdAt
+) {
+  const userEmail = pendingRecord.user_email;
+  const userName = pendingRecord.user_name || 'Customer';
+
+  console.log(`✅ Processing auto-credit for user: ${userEmail}`);
+
+  // Fetch user profile
+  const { data: userData, error: userErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('email', userEmail.toLowerCase().trim());
+
+  if (userErr || !userData || userData.length === 0) {
+    console.error(`❌ User profile not found for email: ${userEmail}`);
+    return;
+  }
+
+  const profile = userData[0];
+  const currentBalance = Number(profile.wallet_balance || 0);
+  const newBalance = Number((currentBalance + amount).toFixed(2));
+
+  console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
+
+  // Update User Profile balance
+  const { error: updateErr } = await supabase
+    .from('profiles')
+    .update({ wallet_balance: newBalance })
+    .eq('id', profile.id);
+
+  if (updateErr) {
+    console.error('❌ Failed to update user profile balance:', updateErr.message);
+    return;
+  }
+
+  // Update Pending Top-Up status
+  await supabase
+    .from('pending_topups')
+    .update({ 
+      status: 'completed',
+      completed_at: new Date().toISOString()
+    })
+    .eq('id', pendingRecord.id);
+
+  // Insert Wallet Transaction
+  await supabase
+    .from('wallet_transactions')
+    .insert([{
+      user_id: profile.id,
+      amount: amount,
+      type: 'topup',
+      description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${referenceCode})`,
+      reference_code: referenceCode,
+      momo_txn_id: momoTxnId,
+      balance_after: newBalance,
+      created_at: createdAt
+    }]);
+
+  // Update Webhook as claimed
+  const claimedString = `${userName} (${userEmail}) via Auto-Ref ${referenceCode}`;
+  await supabase
+    .from('sms_webhooks')
+    .update({
+      status: 'claimed',
+      claimed_by: claimedString,
+      reference_code: referenceCode
+    })
+    .eq('momo_txn_id', momoTxnId);
+
+  // Insert Payment Claim
+  await supabase
+    .from('payment_claims')
+    .insert([{
+      user_id: profile.id,
+      user_email: userEmail,
+      user_name: userName,
+      momo_txn_id: momoTxnId,
+      momo_number: senderPhone || 'SMS Webhook',
+      amount: amount,
+      status: 'claimed',
+      admin_notes: `Auto-verified & claimed instantly via webhook with reference ${referenceCode}`,
+      created_at: createdAt
+    }]);
+
+  console.log(`✅✅✅ SUCCESS! Auto-credited user ${userEmail} with GHS ${amount} via Ref ${referenceCode}`);
 }
 
 export default async function handler(req, res) {
@@ -427,7 +468,7 @@ export default async function handler(req, res) {
     const sourceData = req.method === 'GET' ? req.query : (req.body || {});
     console.log('📨 Webhook received data:', JSON.stringify(sourceData, null, 2));
 
-    const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
+    const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName } = extractWebhookData(sourceData);
 
     const payload = {
       momoTxnId: momoTxnId || `SMS-${Date.now()}`,
@@ -436,6 +477,7 @@ export default async function handler(req, res) {
       referenceCode: referenceCode || '',
       rawSms: rawSms || JSON.stringify(sourceData),
       senderPhone: senderPhone || 'SMS Forwarder',
+      senderName: senderName || '',
       receivedAt: new Date().toISOString()
     };
 
@@ -469,6 +511,7 @@ export default async function handler(req, res) {
             payload.referenceCode,
             payload.rawSms,
             payload.senderPhone,
+            payload.senderName,
             payload.receivedAt
           );
         }
