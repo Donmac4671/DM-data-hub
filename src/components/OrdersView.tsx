@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Order } from '../types';
 import { ShoppingBag, Download, RefreshCw } from 'lucide-react';
 import { OrderFilterBar, OrderFiltersState, filterOrders } from './OrderFilterBar';
+import { renderStatusBadge } from '../utils/statusHelper';
 
 interface OrdersViewProps {
   onSelectReceiptOrder: (order: Order) => void;
@@ -77,20 +78,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800 gap-2">
                 <div className="flex items-center space-x-3">
                   <span className="font-extrabold text-sm text-zinc-900 dark:text-zinc-100">{ord.orderNumber}</span>
-                  {useApp().updateOrderStatus ? (
-                    // Utilize standardized glowing status badge helper
-                    renderStatusBadge(ord.status)
-                  ) : (
-                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                      ord.status === 'completed'
-                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
-                        : ord.status === 'failed'
-                        ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
-                        : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                    }`}>
-                      {ord.status === 'pending' ? 'PENDING (3-30 MINS)' : ord.status.toUpperCase()}
-                    </span>
-                  )}
+                  {renderStatusBadge(ord.status)}
                 </div>
 
                 <span className="text-xs text-zinc-400 font-mono">
