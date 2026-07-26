@@ -110,48 +110,42 @@ function extractWebhookData(body) {
       }
     }
 
-    // 5. REFERENCE CODE extraction - IMPROVED VERSION
+    // 5. REFERENCE CODE extraction - SIMPLIFIED FIX
     if (!referenceCode) {
       console.log('🔍 Attempting to extract reference code from:', rawSms);
       
-      // Try multiple patterns in order of priority
-      const refPatterns = [
-        /\b(DMH-\d{6})\b/i,
-        /\b(DMH\d{6})\b/i,
-        /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-        /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-        /DMH[-\s]*(\d{6})/i,
-        /\b([A-Za-z0-9]{6,12})\b/
-      ];
+      // Look for DMH-XXXXXX or DMHXXXXXX
+      const dmhMatch = rawSms.match(/(DMH[-]?\d{6})/i);
+      if (dmhMatch) {
+        let code = dmhMatch[1].toUpperCase();
+        // Add dash if missing
+        if (!code.includes('-')) {
+          code = code.substring(0, 3) + '-' + code.substring(3);
+        }
+        referenceCode = code;
+        console.log('📌 Extracted DMH Reference Code:', referenceCode);
+      }
       
-      for (const pattern of refPatterns) {
-        const match = rawSms.match(pattern);
-        if (match) {
-          let code = '';
-          // Handle different match groups
-          if (match[1]) {
-            code = match[1].trim();
-          } else {
-            code = match[0].trim();
-          }
-          
-          // If we got DMH without dash, add it
-          if (/^DMH\d{6}$/i.test(code)) {
-            code = code.substring(0, 3) + '-' + code.substring(3);
-          }
-          
-          // If we got just numbers from DMH pattern
-          if (/^\d{6}$/.test(code) && rawSms.match(/DMH/i)) {
-            code = 'DMH-' + code;
-          }
-          
-          // Make sure it's a valid reference code
-          if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
+      // If no DMH found, try looking for "Reference: CODE"
+      if (!referenceCode) {
+        const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
+        if (refMatch) {
+          let code = refMatch[1].trim();
+          // Remove trailing punctuation
+          code = code.replace(/[,;.:!?]$/, '');
+          if (code.length >= 4) {
             referenceCode = code.toUpperCase();
-            console.log('📌 Extracted Reference Code:', referenceCode);
-            console.log('📌 Using pattern:', pattern);
-            break;
+            console.log('📌 Extracted Reference Code from "Reference:" pattern:', referenceCode);
           }
+        }
+      }
+      
+      // If still no reference, try looking for any DMH pattern
+      if (!referenceCode) {
+        const anyDmhMatch = rawSms.match(/DMH\s*(\d{6})/i);
+        if (anyDmhMatch) {
+          referenceCode = 'DMH-' + anyDmhMatch[1];
+          console.log('📌 Extracted DMH Reference Code from numbers:', referenceCode);
         }
       }
       
