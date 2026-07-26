@@ -11,33 +11,37 @@ const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supaba
 function extractWebhookData(body) {
   if (!body) body = {};
 
-  let rawSms = typeof body === 'string' ? body : '';
-
-  if (!rawSms && typeof body === 'object') {
-    rawSms = body.text || body.message || body.body || body.sms || body.content ||
+  // === FORCE REFERENCE EXTRACTION ===
+  let rawText = '';
+  if (typeof body === 'string') {
+    rawText = body;
+  } else if (body && typeof body === 'object') {
+    rawText = body.text || body.message || body.body || body.sms || body.content || 
              body.msg || body.rawSms || body.smsContent || body.sms_body ||
              body.msg_body || body.notification || body.data || '';
-
-    if (!rawSms) {
-      for (const val of Object.values(body)) {
-        if (typeof val === 'string' && val.length > 10) {
-          const lower = val.toLowerCase();
-          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || lower.includes('received') || lower.includes('payment')) {
-            rawSms = val;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!rawSms) {
-      try {
-        rawSms = JSON.stringify(body);
-      } catch (e) {
-        rawSms = '';
+  }
+  
+  // Force extract DMH reference
+  if (rawText) {
+    const dmhMatch = rawText.match(/DMH-\d{6}/i);
+    if (dmhMatch) {
+      const ref = dmhMatch[0].toUpperCase();
+      body.referenceCode = ref;
+      body.reference = ref;
+      console.log('🎯 FORCE EXTRACTED REFERENCE:', ref);
+    } else {
+      // Try without dash: DMH123456
+      const dmhNoDash = rawText.match(/DMH\d{6}/i);
+      if (dmhNoDash) {
+        let ref = dmhNoDash[0].toUpperCase();
+        ref = ref.substring(0, 3) + '-' + ref.substring(3);
+        body.referenceCode = ref;
+        body.reference = ref;
+        console.log('🎯 FORCE EXTRACTED REFERENCE (no dash):', ref);
       }
     }
   }
+  // === END FORCE EXTRACTION ===
 
   const senderPhone = (typeof body === 'object' && (body.from || body.sender || body.phone || body.senderPhone || body.address)) || 'SMS Forwarder';
 
