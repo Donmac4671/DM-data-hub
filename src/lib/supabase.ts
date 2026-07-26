@@ -3,6 +3,7 @@ import { UserProfile, DataPackage, Announcement } from '../types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '';
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl &&
@@ -11,8 +12,14 @@ export const isSupabaseConfigured = Boolean(
   !supabaseAnonKey.includes('your-supabase-anon-key')
 );
 
+// Regular client for reads (uses anon key)
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
+  : null;
+
+// Admin client for writes (uses service role key - bypasses RLS)
+export const supabaseAdmin = isSupabaseConfigured && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey)
   : null;
 
 // Helper to convert DB snake_case row to UserProfile
@@ -207,8 +214,24 @@ export async function updateProfileInSupabase(profileIdOrEmail: string, updates:
 }
 
 // ==========================================
-// PENDING TOP-UPS SUPABASE INTEGRATION (NEW)
+// PENDING TOP-UPS SUPABASE INTEGRATION
 // ==========================================
+
+// Local storage helper functions
+function savePendingTopupToLocalStorage(referenceCode: string, amount: number) {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pendingTopups') || '[]');
+    pending.push({
+      reference_code: referenceCode,
+      amount: amount,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    });
+    localStorage.setItem('pendingTopups', JSON.stringify(pending));
+  } catch (err) {
+    console.error('Error saving to localStorage:', err);
+  }
+}
 
 export async function createPendingTopUpInSupabase(
   referenceCode: string,
@@ -216,14 +239,24 @@ export async function createPendingTopUpInSupabase(
   userEmail: string,
   userName: string
 ): Promise<any> {
-  if (!supabase) {
+  // Use admin client if available, otherwise fallback to regular client
+  const client = supabaseAdmin || supabase;
+  
+  if (!client) {
     console.warn('Supabase not configured, saving to localStorage fallback');
     savePendingTopupToLocalStorage(referenceCode, amount);
     return { reference_code: referenceCode, amount, status: 'pending' };
   }
 
   try {
-    const { data, error } = await supabase
+    console.log('📝 Inserting pending top-up:', {
+      referenceCode,
+      amount,
+      userEmail,
+      userName
+    });
+
+    const { data, error } = await client
       .from('pending_topups')
       .insert([{
         reference_code: referenceCode,
@@ -237,24 +270,29 @@ export async function createPendingTopUpInSupabase(
       .single();
 
     if (error) {
-      console.error('Error creating pending top-up in Supabase:', error);
+      console.error('❌ Error creating pending top-up in Supabase:', error);
+      console.error('❌ Error details:', {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
       // Fallback to localStorage
       savePendingTopupToLocalStorage(referenceCode, amount);
       return { reference_code: referenceCode, amount, status: 'pending' };
     }
 
     console.log('✅ Pending top-up created in Supabase:', data);
-    
-    // Also save to localStorage as backup
     savePendingTopupToLocalStorage(referenceCode, amount);
-    
     return data;
   } catch (err) {
-    console.error('Failed to create pending top-up:', err);
+    console.error('❌ Failed to create pending top-up:', err);
     savePendingTopupToLocalStorage(referenceCode, amount);
     return { reference_code: referenceCode, amount, status: 'pending' };
   }
 }
+
+// ... (the rest of your existing functions - Orders, SMS Webhooks, Claims, Complaints, Packages, Announcements, etc.)
 
 export async function fetchPendingTopupsFromSupabase(userEmail: string): Promise<any[]> {
   if (!supabase) {
