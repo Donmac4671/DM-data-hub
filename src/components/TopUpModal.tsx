@@ -12,7 +12,13 @@ import {
   CheckCircle2,
   Smartphone
 } from 'lucide-react';
+// FIXED: Use the correct path based on your file structure
+// Option A: If supabaseClient.ts is in src/
 import { createPendingTopUpInSupabase } from '../supabaseClient';
+// Option B: If supabaseClient.ts is in src/lib/
+// import { createPendingTopUpInSupabase } from '../lib/supabaseClient';
+// Option C: If supabaseClient.ts is in src/utils/
+// import { createPendingTopUpInSupabase } from '../utils/supabaseClient';
 
 interface TopUpModalProps {
   isOpen: boolean;
