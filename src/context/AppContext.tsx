@@ -319,12 +319,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (
         matched &&
         (matched.walletBalance !== currentUser.walletBalance ||
-          matched.ordersCount !== currentUser.ordersCount ||
-          matched.totalSpent !== currentUser.totalSpent ||
-          matched.isBlocked !== currentUser.isBlocked ||
+          (matched.ordersCount ?? 0) !== (currentUser.ordersCount ?? 0) ||
+          (matched.totalSpent ?? 0) !== (currentUser.totalSpent ?? 0) ||
+          !!matched.isBlocked !== !!currentUser.isBlocked ||
           matched.role !== currentUser.role)
       ) {
-        const synced = { ...currentUser, ...matched };
+        const synced = {
+          ...currentUser,
+          ...matched,
+          ordersCount: matched.ordersCount ?? currentUser.ordersCount ?? 0,
+          totalSpent: matched.totalSpent ?? currentUser.totalSpent ?? 0,
+          isBlocked: !!matched.isBlocked,
+        };
         setCurrentUser(synced);
         localStorage.setItem('dmh_user', JSON.stringify(synced));
       }
@@ -338,7 +344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedOrdersStr) {
         try {
           const storedOrders = JSON.parse(storedOrdersStr);
-          setOrders(prev => (JSON.stringify(prev) === storedOrdersStr ? prev : storedOrders));
+          setOrders(prev => (prev.length === storedOrders.length && JSON.stringify(prev) === storedOrdersStr ? prev : storedOrders));
         } catch (e) {}
       }
 
@@ -346,7 +352,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedUsersStr) {
         try {
           const storedUsers = JSON.parse(storedUsersStr);
-          setUsersList(prev => (JSON.stringify(prev) === storedUsersStr ? prev : storedUsers));
+          setUsersList(prev => (prev.length === storedUsers.length && JSON.stringify(prev) === storedUsersStr ? prev : storedUsers));
         } catch (e) {}
       }
 
@@ -354,7 +360,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedClaimsStr) {
         try {
           const storedClaims = JSON.parse(storedClaimsStr);
-          setClaims(prev => (JSON.stringify(prev) === storedClaimsStr ? prev : storedClaims));
+          setClaims(prev => (prev.length === storedClaims.length && JSON.stringify(prev) === storedClaimsStr ? prev : storedClaims));
         } catch (e) {}
       }
 
@@ -362,7 +368,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedComplaintsStr) {
         try {
           const storedComplaints = JSON.parse(storedComplaintsStr);
-          setComplaints(prev => (JSON.stringify(prev) === storedComplaintsStr ? prev : storedComplaints));
+          setComplaints(prev => (prev.length === storedComplaints.length && JSON.stringify(prev) === storedComplaintsStr ? prev : storedComplaints));
         } catch (e) {}
       }
 
@@ -370,7 +376,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedWebhooksStr) {
         try {
           const storedWebhooks = JSON.parse(storedWebhooksStr);
-          setWebhookLogs(prev => (JSON.stringify(prev) === storedWebhooksStr ? prev : storedWebhooks));
+          setWebhookLogs(prev => (prev.length === storedWebhooks.length && JSON.stringify(prev) === storedWebhooksStr ? prev : storedWebhooks));
         } catch (e) {}
       }
 
@@ -378,7 +384,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedNetworksStr) {
         try {
           const storedNetworks = JSON.parse(storedNetworksStr);
-          setNetworks(prev => (JSON.stringify(prev) === storedNetworksStr ? prev : storedNetworks));
+          setNetworks(prev => (prev.length === storedNetworks.length && JSON.stringify(prev) === storedNetworksStr ? prev : storedNetworks));
         } catch (e) {}
       }
 
@@ -386,7 +392,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedPackagesStr) {
         try {
           const storedPackages = JSON.parse(storedPackagesStr);
-          setPackages(prev => (JSON.stringify(prev) === storedPackagesStr ? prev : storedPackages));
+          setPackages(prev => (prev.length === storedPackages.length && JSON.stringify(prev) === storedPackagesStr ? prev : storedPackages));
         } catch (e) {}
       }
 
@@ -394,7 +400,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (storedAnnsStr) {
         try {
           const storedAnns = JSON.parse(storedAnnsStr);
-          setAnnouncements(prev => (JSON.stringify(prev) === storedAnnsStr ? prev : storedAnns));
+          setAnnouncements(prev => (prev.length === storedAnns.length && JSON.stringify(prev) === storedAnnsStr ? prev : storedAnns));
         } catch (e) {}
       }
     };
@@ -409,7 +415,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           const adminExists = spUsers.some(u => u.role === 'admin' || u.email.toLowerCase() === MOCK_ADMIN_USER.email.toLowerCase());
           const finalUsers = adminExists ? spUsers : [MOCK_ADMIN_USER, ...spUsers];
           setUsersList(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(finalUsers)) {
+            if (prev.length !== finalUsers.length || JSON.stringify(prev) !== JSON.stringify(finalUsers)) {
               localStorage.setItem('dmh_users', JSON.stringify(finalUsers));
               return finalUsers;
             }
@@ -423,7 +429,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             prev.forEach(o => map.set(o.id, o));
             spOrders.forEach(o => map.set(o.id, o));
             const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+            if (prev.length !== merged.length || JSON.stringify(prev) !== JSON.stringify(merged)) {
               localStorage.setItem('dmh_orders', JSON.stringify(merged));
               return merged;
             }
@@ -437,7 +443,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
             spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
             const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+            if (prev.length !== merged.length || JSON.stringify(prev) !== JSON.stringify(merged)) {
               localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
               return merged;
             }
@@ -451,7 +457,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             prev.forEach(c => map.set(c.id, c));
             spClaims.forEach(c => map.set(c.id, c));
             const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+            if (prev.length !== merged.length || JSON.stringify(prev) !== JSON.stringify(merged)) {
               localStorage.setItem('dmh_claims', JSON.stringify(merged));
               return merged;
             }
@@ -465,7 +471,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             prev.forEach(c => map.set(c.id, c));
             spComps.forEach(c => map.set(c.id, c));
             const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+            if (prev.length !== merged.length || JSON.stringify(prev) !== JSON.stringify(merged)) {
               localStorage.setItem('dmh_complaints', JSON.stringify(merged));
               return merged;
             }
