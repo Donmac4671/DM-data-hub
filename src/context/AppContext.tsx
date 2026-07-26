@@ -172,6 +172,34 @@ function getStorageItem<T>(key: string, defaultValue: T): T {
 }
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+    // Add this helper function right after the AppProvider opening
+  const getSafeCurrentUser = (): UserProfile | null => {
+    // First try the state
+    if (currentUser) return currentUser;
+    
+    // If authenticated but no user, try localStorage
+    if (isAuthenticated) {
+      try {
+        const saved = localStorage.getItem('dmh_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          // Sync it back to state
+          setCurrentUser(parsed);
+          return parsed;
+        }
+      } catch (e) {
+        console.error('Error reading user from localStorage:', e);
+      }
+      
+      // If still no user, but authenticated is true, fix the inconsistency
+      console.warn('⚠️ Auth state inconsistent: authenticated but no user. Fixing...');
+      setIsAuthenticated(false);
+      localStorage.removeItem('dmh_auth');
+      return null;
+    }
+    
+    return null;
+  };
   // Theme state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('dmh_theme') as 'light' | 'dark') || 'dark';
@@ -1367,36 +1395,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const loginUser = async (email: string, password?: string): Promise<UserProfile> => {
-    let user: UserProfile;
+  let user: UserProfile;
 
-    if (isSupabaseConfigured) {
-      user = await loginUserFromSupabase(email, password);
-    } else {
-      const cleanEmail = email.toLowerCase().trim();
-      const found = usersList.find(u => u.email.toLowerCase() === cleanEmail);
+  if (isSupabaseConfigured) {
+    user = await loginUserFromSupabase(email, password);
+  } else {
+    const cleanEmail = email.toLowerCase().trim();
+    const found = usersList.find(u => u.email.toLowerCase() === cleanEmail);
 
-      if (!found) {
-        throw new Error(`No account found with email ${cleanEmail}. Please register an account first.`);
-      }
-
-      if (found.isBlocked) {
-        throw new Error('This account has been suspended or blocked by admin. Please contact support.');
-      }
-
-      if (password && found.passwordHash && found.passwordHash !== password) {
-        throw new Error('Incorrect password. Please check your credentials and try again.');
-      }
-
-      user = found;
+    if (!found) {
+      throw new Error(`No account found with email ${cleanEmail}. Please register an account first.`);
     }
 
-    setCurrentUser(user);
-    setActiveRole(user.role);
-    setIsAuthenticated(true);
-    localStorage.setItem('dmh_user', JSON.stringify(user));
-    showToast('Welcome Back', `Signed in as ${user.fullName}`, 'success');
-    return user;
-  };
+    if (found.isBlocked) {
+      throw new Error('This account has been suspended or blocked by admin. Please contact support.');
+    }
+
+    if (password && found.passwordHash && found.passwordHash !== password) {
+      throw new Error('Incorrect password. Please check your credentials and try again.');
+    }
+
+    user = found;
+  }
+
+  // ALWAYS set both together
+  setCurrentUser(user);
+  setIsAuthenticated(true);
+  localStorage.setItem('dmh_user', JSON.stringify(user));
+  localStorage.setItem('dmh_auth', JSON.stringify(true));
+  
+  showToast('Welcome Back', `Signed in as ${user.fullName}`, 'success');
+  return user;
+};
 
   const loginOrRegisterUser = async (candidate: UserProfile) => {
     try {
@@ -1771,7 +1801,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <AppContext.Provider
       value={{
-        currentUser,
+        currentUser: getSafeCurrentUser(),
         setCurrentUser,
         updateUserProfile,
         activeRole,
