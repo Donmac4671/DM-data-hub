@@ -11,34 +11,62 @@ const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supaba
 function extractWebhookData(body) {
   if (!body) body = {};
 
-  let rawSms = typeof body === 'string' ? body : '';
-
-  if (!rawSms && typeof body === 'object') {
+  // === CRITICAL FIX: Explicitly handle GET parameters ===
+  let rawSms = '';
+  
+  // Check if this is from a GET request (query parameters)
+  if (body.text) {
+    rawSms = body.text;
+    console.log('📝 Got SMS from text parameter:', rawSms);
+  } else if (body.message) {
+    rawSms = body.message;
+    console.log('📝 Got SMS from message parameter:', rawSms);
+  } else if (body.sms) {
+    rawSms = body.sms;
+    console.log('📝 Got SMS from sms parameter:', rawSms);
+  } else if (body.rawSms) {
+    rawSms = body.rawSms;
+    console.log('📝 Got SMS from rawSms parameter:', rawSms);
+  } else if (typeof body === 'string') {
+    rawSms = body;
+    console.log('📝 Got SMS from string body:', rawSms);
+  } else if (body && typeof body === 'object') {
+    // Try to find SMS in various object fields
     rawSms = body.text || body.message || body.body || body.sms || body.content ||
              body.msg || body.rawSms || body.smsContent || body.sms_body ||
              body.msg_body || body.notification || body.data || '';
-
-    if (!rawSms) {
+    
+    if (rawSms) {
+      console.log('📝 Got SMS from object fields:', rawSms);
+    } else {
+      // Search all values for SMS-like content
       for (const val of Object.values(body)) {
         if (typeof val === 'string' && val.length > 10) {
           const lower = val.toLowerCase();
-          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || lower.includes('received') || lower.includes('payment')) {
+          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || 
+              lower.includes('received') || lower.includes('payment') || lower.includes('reference')) {
             rawSms = val;
+            console.log('📝 Found SMS in object value:', rawSms.substring(0, 50) + '...');
             break;
           }
         }
       }
     }
+  }
 
-    if (!rawSms) {
-      try {
-        rawSms = JSON.stringify(body);
-      } catch (e) {
-        rawSms = '';
-      }
+  // If still empty, try JSON.stringify as last resort
+  if (!rawSms && body && typeof body === 'object') {
+    try {
+      rawSms = JSON.stringify(body);
+      console.log('📝 Using JSON.stringify fallback:', rawSms.substring(0, 50) + '...');
+    } catch (e) {
+      rawSms = '';
     }
   }
 
+  console.log('📝 FINAL Raw SMS Content:', rawSms);
+
+  // ... continue with the rest of your extraction code ...
   const senderPhone = (typeof body === 'object' && (body.from || body.sender || body.phone || body.senderPhone || body.address)) || 'SMS Forwarder';
 
   let momoTxnId = (typeof body === 'object' && (body.momoTxnId || body.txnId || body.transaction_id || body.ref)) || null;
@@ -46,114 +74,80 @@ function extractWebhookData(body) {
   let network = (typeof body === 'object' && body.network) || null;
   let referenceCode = (typeof body === 'object' && (body.reference || body.refCode)) || null;
 
-  console.log('📝 Raw SMS Content:', rawSms);
-
-  if (rawSms) {
-    const smsCleaned = rawSms
-      .replace(/(\d+)\.[OOoo]/g, '$1.00')
-      .replace(/(\d+)\.[Oo]/g, '$1.00');
-
-    // 1. TRANSACTION ID extraction
-    if (!momoTxnId) {
-      const txnPatterns = [
-        /\b(\d{11})\b/,
-        /\b(\d{8,16})\b/,
-        /(?:Transaction ID|Txn ID|Trans ID|Transaction Id|Ref ID)[:\s]*(\d{8,16})/i,
-        /(?:ID|Ref)[:\s]*(\d{8,16})/i,
-        /\b(\d{9,20})\b/
-      ];
-
-      for (const pattern of txnPatterns) {
-        const match = smsCleaned.match(pattern);
-        if (match) {
-          const potentialId = match[1].trim();
-          if (/^\d{8,16}$/.test(potentialId)) {
-            momoTxnId = potentialId;
-            console.log('✅ Extracted Transaction ID:', momoTxnId);
-            break;
-          }
-        }
-      }
+  // === REFERENCE CODE EXTRACTION FROM rawSms ===
+  if (rawSms && !referenceCode) {
+    console.log('🔍 Attempting to extract reference code from raw SMS');
+    
+    // Try to find DMH-XXXXXX pattern
+    const dmhMatch = rawSms.match(/DMH-\d{6}/i);
+    if (dmhMatch) {
+      referenceCode = dmhMatch[0].toUpperCase();
+      console.log('📌 Extracted DMH Reference Code:', referenceCode);
     }
-
-    // 2. Amount extraction
-    if (!amount || isNaN(amount)) {
-      const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i) ||
-                          smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          smsCleaned.match(/\b([0-9]+\.[0-9]{2})\b/);
-      if (amountMatch) {
-        amount = parseFloat(amountMatch[1]);
-        console.log('💰 Extracted Amount:', amount);
-      }
-    }
-
-    // 3. Network extraction
-    if (!network) {
-      const smsLower = rawSms.toLowerCase();
-      if (smsLower.includes('telecel') || smsLower.includes('vodafone')) {
-        network = 'Telecel';
-      } else if (smsLower.includes('airtel') || smsLower.includes('tigo') || smsLower.includes('at money') || smsLower.includes('at ')) {
-        network = 'AirtelTigo';
-      } else {
-        network = 'MTN';
-      }
-    }
-
-    // 4. REFERENCE CODE extraction - SIMPLIFIED AND FIXED
+    
+    // If not found, try DMH without dash (DMH123456)
     if (!referenceCode) {
-      console.log('🔍 Attempting to extract reference code from raw SMS');
-      
-      // Try to find DMH-XXXXXX pattern
-      const dmhMatch = rawSms.match(/DMH-\d{6}/i);
-      if (dmhMatch) {
-        referenceCode = dmhMatch[0].toUpperCase();
-        console.log('📌 Extracted DMH Reference Code:', referenceCode);
+      const dmhNoDashMatch = rawSms.match(/DMH\d{6}/i);
+      if (dmhNoDashMatch) {
+        let code = dmhNoDashMatch[0].toUpperCase();
+        code = code.substring(0, 3) + '-' + code.substring(3);
+        referenceCode = code;
+        console.log('📌 Extracted DMH Reference Code (no dash):', referenceCode);
       }
-      
-      // If not found, try DMH without dash (DMH123456)
-      if (!referenceCode) {
-        const dmhNoDashMatch = rawSms.match(/DMH\d{6}/i);
-        if (dmhNoDashMatch) {
-          let code = dmhNoDashMatch[0].toUpperCase();
-          // Add dash: DMH123456 -> DMH-123456
-          code = code.substring(0, 3) + '-' + code.substring(3);
-          referenceCode = code;
-          console.log('📌 Extracted DMH Reference Code (no dash):', referenceCode);
+    }
+    
+    // If still not found, try "Reference: CODE" pattern
+    if (!referenceCode) {
+      const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
+      if (refMatch) {
+        let code = refMatch[1].trim();
+        code = code.replace(/[,;.:!?]$/, '');
+        if (code.length >= 4) {
+          referenceCode = code.toUpperCase();
+          console.log('📌 Extracted Reference Code from "Reference:" pattern:', referenceCode);
         }
       }
-      
-      // If still not found, try "Reference: CODE" pattern
-      if (!referenceCode) {
-        const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
-        if (refMatch) {
-          let code = refMatch[1].trim();
-          code = code.replace(/[,;.:!?]$/, '');
-          if (code.length >= 4) {
-            referenceCode = code.toUpperCase();
-            console.log('📌 Extracted Reference Code from "Reference:" pattern:', referenceCode);
-          }
-        }
-      }
-      
-      if (!referenceCode) {
-        console.log('⚠️ No reference code found in SMS');
-      }
+    }
+    
+    if (!referenceCode) {
+      console.log('⚠️ No reference code found in SMS');
+    }
+  }
+
+  // === TRANSACTION ID EXTRACTION ===
+  if (rawSms && !momoTxnId) {
+    const txnMatch = rawSms.match(/\b(\d{11})\b/) || rawSms.match(/\b(\d{8,16})\b/);
+    if (txnMatch) {
+      momoTxnId = txnMatch[1];
+      console.log('✅ Extracted Transaction ID:', momoTxnId);
+    }
+  }
+
+  // === AMOUNT EXTRACTION ===
+  if (rawSms && (!amount || isNaN(amount))) {
+    const amountMatch = rawSms.match(/GHS\s*([0-9.]+)/i);
+    if (amountMatch) {
+      amount = parseFloat(amountMatch[1]);
+      console.log('💰 Extracted Amount:', amount);
+    }
+  }
+
+  // === NETWORK EXTRACTION ===
+  if (rawSms && !network) {
+    const smsLower = rawSms.toLowerCase();
+    if (smsLower.includes('telecel') || smsLower.includes('vodafone')) {
+      network = 'Telecel';
+    } else if (smsLower.includes('airtel') || smsLower.includes('tigo')) {
+      network = 'AirtelTigo';
+    } else {
+      network = 'MTN';
     }
   }
 
   const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
-  console.log('📊 Final Extraction Result:', {
-    momoTxnId,
-    amount,
-    network,
-    referenceCode,
-    senderPhone
-  });
-  
+  console.log('📊 FINAL Extraction Result:', result);
   return result;
 }
-
 async function handleAutoCredit(
   momoTxnId,
   amount,
@@ -352,7 +346,8 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, count: 0, data: [] });
     }
 
-    // Process incoming SMS Webhook (POST or GET with parameters)
+    // Process incoming SMS Webho
+    ok (POST or GET with parameters)
     const sourceData = req.method === 'GET' ? req.query : (req.body || {});
     console.log('📨 Webhook received data:', JSON.stringify(sourceData, null, 2));
 
