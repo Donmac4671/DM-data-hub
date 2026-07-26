@@ -85,30 +85,53 @@ function extractWebhookData(body) {
       }
     }
 
-    // 4. Reference Code extraction
+    // 4. FIXED Reference Code extraction - Priority order
     if (!referenceCode) {
+      // Log the SMS for debugging
+      console.log('Raw SMS for ref extraction:', smsCleaned);
+      
+      // PRIORITY 1: Look for DMH pattern (your specific format)
       const dmhMatch = smsCleaned.match(/(DMH-\d{6})/i);
       if (dmhMatch) {
         referenceCode = dmhMatch[1].toUpperCase();
+        console.log('Extracted DMH reference:', referenceCode);
       } else {
-        const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
-        if (refMatch) {
-          const fullRef = refMatch[1].trim();
-          if (fullRef.includes(',')) {
-            const parts = fullRef.split(',').map(p => p.trim());
-            const lastPart = parts[parts.length - 1];
-            const codeMatch = lastPart.match(/([A-Za-z0-9]+)/);
-            if (codeMatch) referenceCode = codeMatch[1];
-          } else {
-            const codeMatch = fullRef.match(/([A-Za-z0-9_-]+)/);
-            if (codeMatch) referenceCode = codeMatch[1];
+        // PRIORITY 2: Look for "Reference:" or "Ref:" followed by a code
+        // This fixes the issue where it was capturing too much text
+        const refPatterns = [
+          // Pattern: Reference: CODE (stops at comma, space, newline, or period)
+          /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+          // Pattern: Ref: CODE
+          /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+          // Pattern: Reference Code: CODE
+          /Reference Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+          // Pattern: Any alphanumeric code with hyphen (like ABC-123456)
+          /\b([A-Z]{2,4}-\d{4,8})\b/,
+          // Pattern: Any 6+ character alphanumeric code (fallback)
+          /\b([A-Za-z0-9]{6,12})\b/
+        ];
+        
+        for (const pattern of refPatterns) {
+          const match = smsCleaned.match(pattern);
+          if (match) {
+            let code = match[1].trim();
+            // Clean the code - remove any trailing punctuation
+            code = code.replace(/[,;.:!?]$/, '');
+            // Only accept codes that are alphanumeric with possible hyphens/underscores
+            if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4) {
+              referenceCode = code;
+              console.log('Extracted reference from pattern:', referenceCode, 'Pattern:', pattern);
+              break;
+            }
           }
         }
       }
     }
   }
 
-  return { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+  console.log('Extraction result:', result);
+  return result;
 }
 
 async function handleAutoCredit(
@@ -120,9 +143,18 @@ async function handleAutoCredit(
   senderPhone,
   createdAt
 ) {
-  if (!supabase || !referenceCode) return;
+  if (!supabase) {
+    console.log('Supabase not configured, skipping auto-credit');
+    return;
+  }
+  
+  if (!referenceCode) {
+    console.log('No reference code found, skipping auto-credit');
+    return;
+  }
+
   const cleanRef = referenceCode.trim().toUpperCase();
-  if (!cleanRef) return;
+  console.log(`Looking for pending top-up with reference: "${cleanRef}"`);
 
   try {
     // 1. Find matching pending top-up
@@ -132,12 +164,25 @@ async function handleAutoCredit(
       .eq('reference_code', cleanRef)
       .eq('status', 'pending');
 
-    if (pendingErr || !pendingData || pendingData.length === 0) {
-      console.log(`No pending top up matching reference: ${cleanRef}`);
+    if (pendingErr) {
+      console.error('Error fetching pending top-up:', pendingErr);
+      return;
+    }
+
+    if (!pendingData || pendingData.length === 0) {
+      console.log(`No pending top up found matching reference: "${cleanRef}"`);
+      // Log all pending top-ups for debugging
+      const { data: allPending } = await supabase
+        .from('pending_topups')
+        .select('reference_code, status')
+        .eq('status', 'pending');
+      console.log('All pending references:', allPending?.map(p => p.reference_code) || []);
       return;
     }
 
     const matchReq = pendingData[0];
+    console.log('Found matching pending top-up:', matchReq);
+    
     const userEmail = matchReq.user_email;
     const userName = matchReq.user_name || 'Customer';
 
@@ -147,7 +192,12 @@ async function handleAutoCredit(
       .select('*')
       .eq('email', userEmail.toLowerCase().trim());
 
-    if (userErr || !userData || userData.length === 0) {
+    if (userErr) {
+      console.error('Error fetching user profile:', userErr);
+      return;
+    }
+
+    if (!userData || userData.length === 0) {
       console.error(`User profile not found for email: ${userEmail}`);
       return;
     }
@@ -155,6 +205,8 @@ async function handleAutoCredit(
     const profile = userData[0];
     const currentBalance = Number(profile.wallet_balance || 0);
     const newBalance = Number((currentBalance + amount).toFixed(2));
+
+    console.log(`Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
 
     // 3. Update User Profile balance
     const { error: updateErr } = await supabase
@@ -213,7 +265,7 @@ async function handleAutoCredit(
         created_at: createdAt
       }]);
 
-    console.log(`Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
+    console.log(`✅ Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
   } catch (err) {
     console.error('Error in handleAutoCredit:', err);
   }
@@ -267,7 +319,10 @@ export default async function handler(req, res) {
 
     // Otherwise, process incoming SMS Webhook (POST or GET with parameters)
     const sourceData = req.method === 'GET' ? req.query : (req.body || {});
+    console.log('Webhook received data:', sourceData);
+
     const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
+    console.log('Extracted data:', { momoTxnId, amount, network, referenceCode, senderPhone });
 
     const payload = {
       momoTxnId: momoTxnId || `SMS-${Date.now()}`,
@@ -279,32 +334,67 @@ export default async function handler(req, res) {
       receivedAt: new Date().toISOString()
     };
 
+    // Log to a webhook_logs table if it exists (optional)
     if (supabase) {
       try {
-        await supabase.from('sms_webhooks').upsert([{
-          momo_txn_id: payload.momoTxnId,
-          amount: payload.amount,
-          network: payload.network,
-          status: 'unclaimed',
-          claimed_by: '-',
-          reference_code: payload.referenceCode,
-          raw_sms: payload.rawSms,
-          sender_phone: payload.senderPhone,
-          created_at: payload.receivedAt
-        }], { onConflict: 'momo_txn_id' });
+        // Check if webhook_logs table exists
+        const { data: tableCheck } = await supabase
+          .from('webhook_logs')
+          .select('count')
+          .limit(1)
+          .maybeSingle()
+          .catch(() => ({ data: null }));
 
-        // Trigger auto credit verification!
-        await handleAutoCredit(
-          payload.momoTxnId,
-          payload.amount,
-          payload.network,
-          payload.referenceCode,
-          payload.rawSms,
-          payload.senderPhone,
-          payload.receivedAt
-        );
+        if (tableCheck !== null) {
+          await supabase.from('webhook_logs').insert([{
+            momo_txn_id: payload.momoTxnId,
+            amount: payload.amount,
+            reference_code: payload.referenceCode,
+            raw_payload: JSON.stringify(sourceData),
+            extracted_sms: payload.rawSms,
+            created_at: payload.receivedAt
+          }]);
+        }
+      } catch (logErr) {
+        // Ignore logging errors
+        console.debug('Webhook logging skipped:', logErr.message);
+      }
+    }
+
+    if (supabase) {
+      try {
+        // Insert or update webhook
+        const { error: insertError } = await supabase
+          .from('sms_webhooks')
+          .upsert([{
+            momo_txn_id: payload.momoTxnId,
+            amount: payload.amount,
+            network: payload.network,
+            status: 'unclaimed',
+            claimed_by: '-',
+            reference_code: payload.referenceCode,
+            raw_sms: payload.rawSms,
+            sender_phone: payload.senderPhone,
+            created_at: payload.receivedAt
+          }], { onConflict: 'momo_txn_id' });
+
+        if (insertError) {
+          console.error('Supabase SMS webhook insert error:', insertError);
+        } else {
+          console.log('Webhook inserted successfully');
+          // Trigger auto credit verification!
+          await handleAutoCredit(
+            payload.momoTxnId,
+            payload.amount,
+            payload.network,
+            payload.referenceCode,
+            payload.rawSms,
+            payload.senderPhone,
+            payload.receivedAt
+          );
+        }
       } catch (dbErr) {
-        console.error('Supabase SMS webhook insert error:', dbErr);
+        console.error('Supabase operation error:', dbErr);
       }
     }
 
@@ -318,6 +408,7 @@ export default async function handler(req, res) {
 
     return res.status(200).send(`OK - SMS Received: Txn ID ${payload.momoTxnId}, Amount GHS ${payload.amount}, Network ${payload.network}`);
   } catch (err) {
+    console.error('Webhook handler error:', err);
     return res.status(200).send(`OK - SMS Received with notice: ${err.message}`);
   }
 }
