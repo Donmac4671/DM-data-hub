@@ -18,7 +18,7 @@ interface TopUpModalProps {
 }
 
 export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
-  const { generateTopUpReference, user: contextUser, isAuthenticated } = useApp();
+  const { generateTopUpReference, user: contextUser, isAuthenticated, setCurrentUser, setIsAuthenticated } = useApp();
 
   const [activeStep, setActiveStep] = useState<'amount' | 'instructions'>('amount');
   const [amountInput, setAmountInput] = useState<number>(50);
@@ -27,35 +27,36 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
 
-  // Debug: Log user state
-  useEffect(() => {
-    console.log('🔍 TopUpModal - User from context:', contextUser);
-    console.log('🔍 TopUpModal - Is authenticated:', isAuthenticated);
-    setIsCheckingAuth(false);
-  }, [contextUser, isAuthenticated]);
-
-  if (!isOpen) return null;
-
-  // Get user from context or localStorage fallback
-  const getUser = () => {
-    // First try context
+  // FIX: Get user from context or localStorage
+  const getUser = (): any => {
+    // If context has user, use it
     if (contextUser) {
       console.log('✅ User found in context');
       return contextUser;
     }
 
-    // Fallback: try localStorage
-    try {
-      const savedUser = localStorage.getItem('dmh_user');
-      if (savedUser) {
-        const parsedUser = JSON.parse(savedUser);
-        console.log('✅ User found in localStorage fallback');
-        return parsedUser;
+    // If authenticated but no user in context, fix the state
+    if (isAuthenticated) {
+      console.log('⚠️ Authenticated but no user in context, checking localStorage...');
+      try {
+        const saved = localStorage.getItem('dmh_user');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          console.log('✅ Found user in localStorage, restoring to context...');
+          // Restore to context
+          setCurrentUser(parsed);
+          return parsed;
+        }
+      } catch (e) {
+        console.error('Error reading user from localStorage:', e);
       }
-    } catch (e) {
-      console.error('Error reading user from localStorage:', e);
+      
+      // If still no user, fix the inconsistency
+      console.warn('⚠️ Auth state inconsistent - logging out');
+      setIsAuthenticated(false);
+      localStorage.removeItem('dmh_auth');
+      return null;
     }
 
     console.log('❌ No user found');
@@ -64,69 +65,14 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
 
   const user = getUser();
 
-  const copyToClipboard = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
+  // Debug logging
+  useEffect(() => {
+    console.log('🔍 TopUpModal - Context user:', contextUser);
+    console.log('🔍 TopUpModal - Is authenticated:', isAuthenticated);
+    console.log('🔍 TopUpModal - Resolved user:', user);
+  }, [contextUser, isAuthenticated, user]);
 
-  const handleGenerateRef = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    // Check if user is logged in
-    if (!user) {
-      setError('Please log in to top up your wallet');
-      console.error('❌ No user found');
-      return;
-    }
-
-    console.log('✅ User found:', user.email, user.fullName);
-
-    if (amountInput < 1) {
-      setError('Please enter a valid amount (minimum GHS 1.00)');
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
-
-    try {
-      // Step 1: Generate reference code
-      const req = generateTopUpReference(amountInput, momoNumberInput);
-      console.log('📝 Generated reference:', req);
-      
-      // Step 2: Save to Supabase
-      await createPendingTopUpInSupabase(
-        req.referenceCode,
-        req.amount,
-        user.email,
-        user.fullName || 'Customer'
-      );
-
-      console.log('✅ Pending top-up saved to Supabase');
-
-      // Step 3: Update local state
-      setPendingReq(req);
-      setActiveStep('instructions');
-    } catch (err: any) {
-      console.error('❌ Error generating top-up reference:', err);
-      setError(err.message || 'Failed to generate reference. Please try again.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // Show loading state while checking auth
-  if (isCheckingAuth) {
-    return (
-      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
-          <p className="text-zinc-600 dark:text-zinc-400">Checking authentication...</p>
-        </div>
-      </div>
-    );
-  }
+  if (!isOpen) return null;
 
   // Show login required if no user
   if (!user) {
@@ -136,7 +82,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
           <div className="text-amber-500 mb-4">
             <Wallet className="w-16 h-16 mx-auto" />
           </div>
-          <h3 className="text-xl font-bold mb-2 text-zinc-900 dark:text-zinc-100">Login Required</h3>
+          <h3 className="text-xl font-bold mb-2 text-zinc-900 dark:text-zinc-100">Please Log In</h3>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
             You need to be logged in to top up your wallet.
           </p>
@@ -150,6 +96,50 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
       </div>
     );
   }
+
+  const copyToClipboard = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleGenerateRef = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!user) {
+      setError('Please log in to top up your wallet');
+      return;
+    }
+
+    if (amountInput < 1) {
+      setError('Please enter a valid amount (minimum GHS 1.00)');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const req = generateTopUpReference(amountInput, momoNumberInput);
+      console.log('📝 Generated reference:', req);
+      
+      await createPendingTopUpInSupabase(
+        req.referenceCode,
+        req.amount,
+        user.email,
+        user.fullName || 'Customer'
+      );
+
+      console.log('✅ Pending top-up saved to Supabase');
+      setPendingReq(req);
+      setActiveStep('instructions');
+    } catch (err: any) {
+      console.error('❌ Error generating top-up reference:', err);
+      setError(err.message || 'Failed to generate reference. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -183,7 +173,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
           </div>
         )}
 
-        {/* Navigation Tabs inside modal */}
+        {/* Navigation Tabs */}
         <div className="flex rounded-xl bg-zinc-100 dark:bg-zinc-800/60 p-1 text-xs font-bold">
           <button
             onClick={() => setActiveStep('amount')}
@@ -279,8 +269,6 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                   <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
                   <span>Generating Reference...</span>
                 </>
-              ) : !user ? (
-                <span>Please Log In First</span>
               ) : (
                 <>
                   <span>Generate Payment Reference</span>
@@ -291,7 +279,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
           </form>
         )}
 
-        {/* STEP 2: Instructions & Reference Code */}
+        {/* STEP 2: Instructions */}
         {activeStep === 'instructions' && pendingReq && (
           <div className="space-y-4 animate-in fade-in">
             {/* Reference Box */}
