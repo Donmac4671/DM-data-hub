@@ -56,33 +56,39 @@ function extractWebhookData(body: any): {
 } {
   if (!body) body = {};
 
-  let rawSms = typeof body === 'string' ? body : '';
-
-  if (!rawSms && typeof body === 'object') {
+  // Get raw SMS text
+  let rawSms = '';
+  
+  if (body.text) {
+    rawSms = body.text;
+  } else if (body.message) {
+    rawSms = body.message;
+  } else if (body.sms) {
+    rawSms = body.sms;
+  } else if (body.rawSms) {
+    rawSms = body.rawSms;
+  } else if (typeof body === 'string') {
+    rawSms = body;
+  } else if (body && typeof body === 'object') {
     rawSms = body.text || body.message || body.body || body.sms || body.content ||
              body.msg || body.rawSms || body.smsContent || body.sms_body ||
              body.msg_body || body.notification || body.data || '';
-
+    
     if (!rawSms) {
       for (const val of Object.values(body)) {
         if (typeof val === 'string' && val.length > 10) {
           const lower = val.toLowerCase();
-          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || lower.includes('received') || lower.includes('payment')) {
+          if (lower.includes('ghs') || lower.includes('transaction') || lower.includes('momo') || 
+              lower.includes('received') || lower.includes('payment') || lower.includes('reference')) {
             rawSms = val;
             break;
           }
         }
       }
     }
-
-    if (!rawSms) {
-      try {
-        rawSms = JSON.stringify(body);
-      } catch (e) {
-        rawSms = '';
-      }
-    }
   }
+
+  console.log('📝 Raw SMS:', rawSms);
 
   const senderPhone = (typeof body === 'object' && (body.from || body.sender || body.phone || body.senderPhone || body.address)) || 'SMS Forwarder';
 
@@ -92,28 +98,25 @@ function extractWebhookData(body: any): {
   let referenceCode: string | null = (typeof body === 'object' && (body.reference || body.refCode)) || null;
 
   if (rawSms) {
-    const smsCleaned = rawSms
-      .replace(/(\d+)\.[OOoo]/g, '$1.00')
-      .replace(/(\d+)\.[Oo]/g, '$1.00');
-
+    // Extract Transaction ID (11 digits)
     if (!momoTxnId) {
-      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Trans ID|Ref ID|ID|Ref)[:\s]*([0-9A-Za-z]{6,20})/i) ||
-                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,16})/i) ||
-                       smsCleaned.match(/\b([0-9]{9,16})\b/);
+      const txnMatch = rawSms.match(/\b(\d{11})\b/) || rawSms.match(/\b(\d{8,16})\b/);
       if (txnMatch) {
-        momoTxnId = txnMatch[1].trim();
+        momoTxnId = txnMatch[1];
+        console.log('✅ Extracted Transaction ID:', momoTxnId);
       }
     }
 
+    // Extract Amount
     if (!amount || isNaN(amount)) {
-      const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i) ||
-                          smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
+      const amountMatch = rawSms.match(/GHS\s*([0-9.]+)/i);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
+        console.log('💰 Extracted Amount:', amount);
       }
     }
 
+    // Extract Network
     if (!network) {
       const smsLower = rawSms.toLowerCase();
       if (smsLower.includes('telecel') || smsLower.includes('vodafone')) {
@@ -125,29 +128,46 @@ function extractWebhookData(body: any): {
       }
     }
 
+    // Extract Reference Code
     if (!referenceCode) {
-      const dmhMatch = smsCleaned.match(/(DMH-\d{6})/i);
+      console.log('🔍 Looking for reference code in:', rawSms);
+      
+      // Try DMH-XXXXXX pattern
+      const dmhMatch = rawSms.match(/DMH-\d{6}/i);
       if (dmhMatch) {
-        referenceCode = dmhMatch[1].toUpperCase();
-      } else {
-        const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
+        referenceCode = dmhMatch[0].toUpperCase();
+        console.log('📌 Extracted Reference Code:', referenceCode);
+      }
+      
+      // Try DMH without dash
+      if (!referenceCode) {
+        const dmhNoDash = rawSms.match(/DMH\d{6}/i);
+        if (dmhNoDash) {
+          let code = dmhNoDash[0].toUpperCase();
+          code = code.substring(0, 3) + '-' + code.substring(3);
+          referenceCode = code;
+          console.log('📌 Extracted Reference Code (no dash):', referenceCode);
+        }
+      }
+      
+      // Try "Reference: CODE" pattern
+      if (!referenceCode) {
+        const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
         if (refMatch) {
-          const fullRef = refMatch[1].trim();
-          if (fullRef.includes(',')) {
-            const parts = fullRef.split(',').map(p => p.trim());
-            const lastPart = parts[parts.length - 1];
-            const codeMatch = lastPart.match(/([A-Za-z0-9]+)/);
-            if (codeMatch) referenceCode = codeMatch[1];
-          } else {
-            const codeMatch = fullRef.match(/([A-Za-z0-9_-]+)/);
-            if (codeMatch) referenceCode = codeMatch[1];
+          let code = refMatch[1].trim();
+          code = code.replace(/[,;.:!?]$/, '');
+          if (code.length >= 4) {
+            referenceCode = code.toUpperCase();
+            console.log('📌 Extracted from "Reference:" pattern:', referenceCode);
           }
         }
       }
     }
   }
 
-  return { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+  const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+  console.log('📊 Final Result:', result);
+  return result;
 }
 
 async function handleAutoCredit(
@@ -282,84 +302,160 @@ async function startServer() {
   });
 
   // GET & POST Webhook endpoint supporting URL query parameters for SMS forwarders
-  const handleWebhookRequest = (req: express.Request, res: express.Response) => {
-    try {
-      const sourceData = req.method === 'GET' ? req.query : req.body;
+const handleWebhookRequest = async (req: express.Request, res: express.Response) => {
+  try {
+    const sourceData = req.method === 'GET' ? req.query : req.body;
 
-      // If GET request has no SMS forwarding params, return list of webhooks
-      if (req.method === 'GET' && !sourceData.text && !sourceData.message && !sourceData.msg && !sourceData.body && !sourceData.sms && !sourceData.content && !sourceData.momoTxnId && !sourceData.txnId) {
-        return res.json({ success: true, count: serverWebhooks.length, data: serverWebhooks });
+    console.log('📨 Webhook received:', sourceData);
+
+    // If GET request has no SMS forwarding params, return list of webhooks
+    if (req.method === 'GET' && !sourceData.text && !sourceData.message && !sourceData.msg && !sourceData.body && !sourceData.sms && !sourceData.content && !sourceData.momoTxnId && !sourceData.txnId) {
+      return res.json({ success: true, count: serverWebhooks.length, data: serverWebhooks });
+    }
+
+    const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
+
+    console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
+
+    const effectiveTxnId = momoTxnId || `SMS-${Date.now()}`;
+    const effectiveAmount = amount || 0;
+    const effectiveNetwork = network || 'MTN';
+
+    // Check for duplicates
+    const existing = serverWebhooks.find(w => w.momoTxnId.toLowerCase() === effectiveTxnId.toLowerCase());
+    if (existing) {
+      return res.status(200).send(`OK - Transaction ${effectiveTxnId} already recorded.`);
+    }
+
+    const newWebhook: ServerSmsWebhook = {
+      id: `wh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      momoTxnId: effectiveTxnId,
+      amount: effectiveAmount,
+      network: effectiveNetwork,
+      status: 'unclaimed',
+      claimedBy: '-',
+      date: new Date().toISOString(),
+      rawSms: rawSms || JSON.stringify(sourceData),
+      senderPhone
+    };
+
+    serverWebhooks.unshift(newWebhook);
+
+    // Try auto-credit if reference code exists
+    if (referenceCode && supabaseServer) {
+      console.log('🔍 Attempting auto-credit for reference:', referenceCode);
+      
+      try {
+        const cleanRef = referenceCode.trim().toUpperCase();
+        
+        // Find pending top-up
+        const { data: pendingData, error: pendingErr } = await supabaseServer
+          .from('pending_topups')
+          .select('*')
+          .eq('reference_code', cleanRef)
+          .eq('status', 'pending');
+
+        if (!pendingErr && pendingData && pendingData.length > 0) {
+          const match = pendingData[0];
+          console.log('✅ Found pending top-up:', match.reference_code);
+
+          // Get user profile
+          const { data: userData } = await supabaseServer
+            .from('profiles')
+            .select('*')
+            .eq('email', match.user_email.toLowerCase().trim());
+
+          if (userData && userData.length > 0) {
+            const profile = userData[0];
+            const newBalance = Number((Number(profile.wallet_balance || 0) + effectiveAmount).toFixed(2));
+
+            // Update wallet
+            await supabaseServer
+              .from('profiles')
+              .update({ wallet_balance: newBalance })
+              .eq('id', profile.id);
+
+            // Update pending top-up
+            await supabaseServer
+              .from('pending_topups')
+              .update({ status: 'completed' })
+              .eq('id', match.id);
+
+            // Update webhook
+            await supabaseServer
+              .from('sms_webhooks')
+              .update({
+                status: 'claimed',
+                claimed_by: `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`,
+                reference_code: cleanRef
+              })
+              .eq('momo_txn_id', effectiveTxnId);
+
+            // Insert wallet transaction
+            await supabaseServer
+              .from('wallet_transactions')
+              .insert([{
+                user_id: profile.id,
+                amount: effectiveAmount,
+                type: 'topup',
+                description: `Auto-Credited via MoMo Webhook (Txn: ${effectiveTxnId}, Ref: ${cleanRef})`,
+                reference_code: cleanRef,
+                momo_txn_id: effectiveTxnId,
+                balance_after: newBalance,
+                created_at: newWebhook.date
+              }]);
+
+            console.log(`✅✅✅ Auto-credited! ${match.user_email} with GHS ${effectiveAmount}`);
+            
+            // Update the webhook in memory
+            const whIndex = serverWebhooks.findIndex(w => w.id === newWebhook.id);
+            if (whIndex !== -1) {
+              serverWebhooks[whIndex].status = 'claimed';
+              serverWebhooks[whIndex].claimedBy = `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`;
+            }
+          }
+        } else {
+          console.log('❌ No pending top-up found for reference:', cleanRef);
+        }
+      } catch (autoErr) {
+        console.error('❌ Auto-credit error:', autoErr);
       }
+    }
 
-      const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
-
-      const effectiveTxnId = momoTxnId || `SMS-${Date.now()}`;
-      const effectiveAmount = amount || 0;
-      const effectiveNetwork = network || 'MTN';
-
-      // Check for duplicates
-      const existing = serverWebhooks.find(w => w.momoTxnId.toLowerCase() === effectiveTxnId.toLowerCase());
-      if (existing) {
-        return res.status(200).send(`OK - Transaction ${effectiveTxnId} already recorded.`);
-      }
-
-      const newWebhook: ServerSmsWebhook = {
-        id: `wh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        momoTxnId: effectiveTxnId,
+    // Also save to Supabase (if not already saved by auto-credit)
+    if (supabaseServer) {
+      supabaseServer.from('sms_webhooks').upsert([{
+        momo_txn_id: effectiveTxnId,
         amount: effectiveAmount,
         network: effectiveNetwork,
-        status: 'unclaimed',
-        claimedBy: '-',
-        date: new Date().toISOString(),
-        rawSms: rawSms || JSON.stringify(sourceData),
-        senderPhone
-      };
-
-      serverWebhooks.unshift(newWebhook);
-
-      if (supabaseServer) {
-        supabaseServer.from('sms_webhooks').upsert([{
-          momo_txn_id: effectiveTxnId,
-          amount: effectiveAmount,
-          network: effectiveNetwork,
-          status: 'unclaimed',
-          claimed_by: '-',
-          reference_code: referenceCode || '',
-          raw_sms: rawSms || JSON.stringify(sourceData),
-          sender_phone: senderPhone || '',
-          created_at: newWebhook.date
-        }], { onConflict: 'momo_txn_id' }).then(({ error }) => {
-          if (error) {
-            console.error('Supabase server webhook insert error:', error.message);
-          } else {
-            // Perform auto credit verification!
-            handleAutoCredit(
-              effectiveTxnId,
-              effectiveAmount,
-              effectiveNetwork,
-              referenceCode,
-              rawSms || JSON.stringify(sourceData),
-              senderPhone || '',
-              newWebhook.date
-            );
-          }
-        });
-      }
-
-      // Return simple OK status string for SMS forwarders, or JSON if requested
-      if (req.headers.accept?.includes('application/json')) {
-        return res.status(200).json({
-          success: true,
-          message: `SMS payment webhook received and recorded: Txn ID ${momoTxnId}, Amount GHS ${amount}`,
-          data: newWebhook
-        });
-      }
-
-      return res.status(200).send(`OK - Payment Received: Txn ID ${momoTxnId}, Amount GHS ${amount}, Network ${effectiveNetwork}`);
-    } catch (err: any) {
-      return res.status(500).send(`ERROR - ${err.message || 'Internal server error'}`);
+        status: newWebhook.status,
+        claimed_by: newWebhook.claimedBy,
+        reference_code: referenceCode || '',
+        raw_sms: rawSms || JSON.stringify(sourceData),
+        sender_phone: senderPhone || '',
+        created_at: newWebhook.date
+      }], { onConflict: 'momo_txn_id' }).then(({ error }) => {
+        if (error) {
+          console.error('Supabase server webhook insert error:', error.message);
+        }
+      });
     }
-  };
+
+    // Return response
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(200).json({
+        success: true,
+        message: `SMS payment webhook received and recorded: Txn ID ${effectiveTxnId}, Amount GHS ${effectiveAmount}`,
+        data: newWebhook
+      });
+    }
+
+    return res.status(200).send(`OK - Payment Received: Txn ID ${effectiveTxnId}, Amount GHS ${effectiveAmount}, Network ${effectiveNetwork}`);
+  } catch (err: any) {
+    console.error('❌ Webhook error:', err);
+    return res.status(500).send(`ERROR - ${err.message || 'Internal server error'}`);
+  }
+};
 
   app.get('/api/webhook/sms', handleWebhookRequest);
   app.post('/api/webhook/sms', handleWebhookRequest);
