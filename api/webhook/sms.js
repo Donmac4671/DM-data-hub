@@ -111,38 +111,39 @@ function extractWebhookData(body) {
     }
 
     // 5. REFERENCE CODE extraction - DMH-XXXXXX format
-    if (!referenceCode) {
-      // Priority 1: DMH-XXXXXX format
-      const dmhMatch = rawSms.match(/\b(DMH-\d{6})\b/i);
-      if (dmhMatch) {
-        referenceCode = dmhMatch[1].toUpperCase();
-        console.log('📌 Extracted DMH Reference Code:', referenceCode);
-      } 
-      // Priority 2: Any reference format in the SMS
-      else {
-        const refPatterns = [
-          /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /\b([A-Z]{2,4}-\d{4,8})\b/,
-          /\b([A-Za-z0-9]{6,12})\b/
-        ];
-        
-        for (const pattern of refPatterns) {
-          const match = rawSms.match(pattern);
-          if (match) {
-            let code = match[1].trim();
-            code = code.replace(/[,;.:!?]$/, '');
-            if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
-              referenceCode = code.toUpperCase();
-              console.log('📌 Extracted Reference Code:', referenceCode);
-              break;
-            }
-          }
+    // 4. REFERENCE CODE extraction - DMH-XXXXXX format
+if (!referenceCode) {
+  // Priority 1: DMH-XXXXXX format
+  const dmhMatch = rawSms.match(/\b(DMH-\d{6})\b/i);
+  if (dmhMatch) {
+    referenceCode = dmhMatch[1].toUpperCase();
+    console.log('📌 Extracted DMH Reference Code:', referenceCode);
+  } 
+  // Priority 2: Any reference format in the SMS
+  else {
+    const refPatterns = [
+      /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+      /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+      /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+      /\b([A-Z]{2,4}-\d{4,8})\b/,
+      /\b([A-Za-z0-9]{6,12})\b/
+    ];
+    
+    for (const pattern of refPatterns) {
+      const match = rawSms.match(pattern);
+      if (match) {
+        let code = match[1].trim();
+        code = code.replace(/[,;.:!?]$/, '');
+        // Skip if it's just a number (transaction ID)
+        if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
+          referenceCode = code.toUpperCase();
+          console.log('📌 Extracted Reference Code:', referenceCode);
+          break;
         }
       }
     }
   }
+}
 
   const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName };
   console.log('📊 Final Extraction Result:', {
