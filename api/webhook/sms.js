@@ -54,7 +54,7 @@ function extractWebhookData(body) {
       .replace(/(\d+)\.[OOoo]/g, '$1.00')
       .replace(/(\d+)\.[Oo]/g, '$1.00');
 
-    // 1. TRANSACTION ID extraction - 11 digits
+    // 1. TRANSACTION ID extraction
     if (!momoTxnId) {
       const txnPatterns = [
         /\b(\d{11})\b/,
@@ -110,59 +110,56 @@ function extractWebhookData(body) {
       }
     }
 
-    // 5. REFERENCE CODE extraction - DMH-XXXXXX format
-    // 4. REFERENCE CODE extraction - DMH-XXXXXX format
-// 4. REFERENCE CODE extraction - IMPROVED VERSION
-if (!referenceCode) {
-  console.log('🔍 Attempting to extract reference code from:', rawSms);
-  
-  // Try multiple patterns in order of priority
-  const refPatterns = [
-    // Pattern 1: DMH-XXXXXX (with dash)
-    /\b(DMH-\d{6})\b/i,
-    // Pattern 2: DMHXXXXXX (without dash)
-    /\b(DMH\d{6})\b/i,
-    // Pattern 3: Reference: CODE (captures until space, comma, or period)
-    /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-    // Pattern 4: Ref: CODE
-    /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-    // Pattern 5: Any DMH pattern in the text
-    /DMH[-\s]*(\d{6})/i,
-    // Pattern 6: Any 6+ character alphanumeric code (fallback)
-    /\b([A-Za-z0-9]{6,12})\b/
-  ];
-  
-  for (const pattern of refPatterns) {
-    const match = rawSms.match(pattern);
-    if (match) {
-      let code = match[1] || match[0];
-      code = code.trim();
+    // 5. REFERENCE CODE extraction - IMPROVED VERSION
+    if (!referenceCode) {
+      console.log('🔍 Attempting to extract reference code from:', rawSms);
       
-      // If we got DMH without dash, add it
-      if (/^DMH\d{6}$/i.test(code)) {
-        code = code.substring(0, 3) + '-' + code.substring(3);
+      // Try multiple patterns in order of priority
+      const refPatterns = [
+        /\b(DMH-\d{6})\b/i,
+        /\b(DMH\d{6})\b/i,
+        /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+        /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+        /DMH[-\s]*(\d{6})/i,
+        /\b([A-Za-z0-9]{6,12})\b/
+      ];
+      
+      for (const pattern of refPatterns) {
+        const match = rawSms.match(pattern);
+        if (match) {
+          let code = '';
+          // Handle different match groups
+          if (match[1]) {
+            code = match[1].trim();
+          } else {
+            code = match[0].trim();
+          }
+          
+          // If we got DMH without dash, add it
+          if (/^DMH\d{6}$/i.test(code)) {
+            code = code.substring(0, 3) + '-' + code.substring(3);
+          }
+          
+          // If we got just numbers from DMH pattern
+          if (/^\d{6}$/.test(code) && rawSms.match(/DMH/i)) {
+            code = 'DMH-' + code;
+          }
+          
+          // Make sure it's a valid reference code
+          if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
+            referenceCode = code.toUpperCase();
+            console.log('📌 Extracted Reference Code:', referenceCode);
+            console.log('📌 Using pattern:', pattern);
+            break;
+          }
+        }
       }
       
-      // If we got just numbers from DMH pattern
-      if (/^\d{6}$/.test(code) && rawSms.match(/DMH/i)) {
-        code = 'DMH-' + code;
-      }
-      
-      // Make sure it's a valid reference code
-      if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
-        referenceCode = code.toUpperCase();
-        console.log('📌 Extracted Reference Code:', referenceCode);
-        console.log('📌 Using pattern:', pattern);
-        break;
+      if (!referenceCode) {
+        console.log('⚠️ No reference code found in SMS');
       }
     }
   }
-  
-  // If still no reference, log the failure
-  if (!referenceCode) {
-    console.log('⚠️ No reference code found in SMS');
-  }
-}
 
   const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone, senderName };
   console.log('📊 Final Extraction Result:', {
@@ -176,7 +173,6 @@ if (!referenceCode) {
   
   return result;
 }
-
 // In api/webhook/sms.js - update the handleAutoCredit function
 
 async function handleAutoCredit(
