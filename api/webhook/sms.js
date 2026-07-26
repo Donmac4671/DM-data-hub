@@ -18,7 +18,6 @@ function extractWebhookData(body) {
              body.msg || body.rawSms || body.smsContent || body.sms_body ||
              body.msg_body || body.notification || body.data || '';
 
-    // If still empty, search values for a string containing SMS keywords
     if (!rawSms) {
       for (const val of Object.values(body)) {
         if (typeof val === 'string' && val.length > 10) {
@@ -50,24 +49,17 @@ function extractWebhookData(body) {
   console.log('📝 Raw SMS Content:', rawSms);
 
   if (rawSms) {
-    // Clean OCR typos e.g. 18.OO -> 18.00
     const smsCleaned = rawSms
       .replace(/(\d+)\.[OOoo]/g, '$1.00')
       .replace(/(\d+)\.[Oo]/g, '$1.00');
 
-    // 1. TRANSACTION ID extraction - PRIORITY FIX
+    // 1. TRANSACTION ID extraction
     if (!momoTxnId) {
-      // Try multiple patterns for 11-digit transaction IDs (like 86061590578)
       const txnPatterns = [
-        // Pattern for exactly 11 digits (most common for MoMo)
         /\b(\d{11})\b/,
-        // Pattern for 8-16 digits
         /\b(\d{8,16})\b/,
-        // Pattern with "Transaction ID:" or "Txn ID:" prefix
         /(?:Transaction ID|Txn ID|Trans ID|Transaction Id|Ref ID)[:\s]*(\d{8,16})/i,
-        // Pattern with "ID:" or "Ref:" prefix
         /(?:ID|Ref)[:\s]*(\d{8,16})/i,
-        // Any number with 9+ digits
         /\b(\d{9,20})\b/
       ];
 
@@ -75,24 +67,10 @@ function extractWebhookData(body) {
         const match = smsCleaned.match(pattern);
         if (match) {
           const potentialId = match[1].trim();
-          // Verify it's a valid transaction ID (all digits, length 8-16)
           if (/^\d{8,16}$/.test(potentialId)) {
             momoTxnId = potentialId;
             console.log('✅ Extracted Transaction ID:', momoTxnId);
             break;
-          }
-        }
-      }
-
-      // If still no match, try looking for any number after "Reference" or "Ref"
-      if (!momoTxnId) {
-        const refMatch = smsCleaned.match(/Reference[:\s]*([^\s,.\n]+)/i);
-        if (refMatch) {
-          const refText = refMatch[1].trim();
-          // Check if it's a numeric transaction ID
-          if (/^\d{8,16}$/.test(refText)) {
-            momoTxnId = refText;
-            console.log('✅ Extracted Transaction ID from Reference field:', momoTxnId);
           }
         }
       }
@@ -103,7 +81,7 @@ function extractWebhookData(body) {
       const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
                           smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i) ||
                           smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          smsCleaned.match(/\b([0-9]+\.[0-9]{2})\b/); // Any decimal with 2 places
+                          smsCleaned.match(/\b([0-9]+\.[0-9]{2})\b/);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
         console.log('💰 Extracted Amount:', amount);
@@ -122,33 +100,42 @@ function extractWebhookData(body) {
       }
     }
 
-    // 4. REFERENCE CODE extraction (for DMH-XXXXXX format)
+    // 4. REFERENCE CODE extraction - Focused on DMH format
     if (!referenceCode) {
-      // Try to find DMH reference code
-      const dmhMatch = smsCleaned.match(/(DMH-\d{6})/i);
+      // Priority 1: DMH-XXXXXX format (like DMH-684067)
+      const dmhMatch = rawSms.match(/\b(DMH-\d{6})\b/i);
       if (dmhMatch) {
         referenceCode = dmhMatch[1].toUpperCase();
         console.log('📌 Extracted DMH Reference Code:', referenceCode);
-      } else {
-        // Try to find any reference code format
-        const refPatterns = [
-          /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          /\b([A-Z]{2,4}-\d{4,8})\b/,
-          /\b([A-Za-z0-9]{6,12})\b/
-        ];
-        
-        for (const pattern of refPatterns) {
-          const match = smsCleaned.match(pattern);
-          if (match) {
-            let code = match[1].trim();
-            code = code.replace(/[,;.:!?]$/, '');
-            // Make sure it's not a transaction ID (all digits)
-            if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
-              referenceCode = code;
-              console.log('📌 Extracted Reference Code:', referenceCode);
-              break;
+      } 
+      // Priority 2: DMHXXXXXX without dash (like DMH684067)
+      else {
+        const dmhNoDashMatch = rawSms.match(/\b(DMH\d{6})\b/i);
+        if (dmhNoDashMatch) {
+          const code = dmhNoDashMatch[1].toUpperCase();
+          referenceCode = code.substring(0, 3) + '-' + code.substring(3);
+          console.log('📌 Extracted and formatted DMH Reference Code:', referenceCode);
+        } 
+        // Priority 3: Other reference patterns
+        else {
+          const refPatterns = [
+            /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+            /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+            /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+            /\b([A-Z]{2,4}-\d{4,8})\b/,
+            /\b([A-Za-z0-9]{6,12})\b/
+          ];
+          
+          for (const pattern of refPatterns) {
+            const match = rawSms.match(pattern);
+            if (match) {
+              let code = match[1].trim();
+              code = code.replace(/[,;.:!?]$/, '');
+              if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
+                referenceCode = code.toUpperCase();
+                console.log('📌 Extracted Reference Code:', referenceCode);
+                break;
+              }
             }
           }
         }
@@ -188,11 +175,35 @@ async function handleAutoCredit(
   }
 
   const cleanRef = referenceCode.trim().toUpperCase();
+  console.log(`🔍 ===== STARTING AUTO-CREDIT CHECK =====`);
   console.log(`🔍 Looking for pending top-up with reference: "${cleanRef}"`);
+  console.log(`🔍 Original reference code: "${referenceCode}"`);
 
   try {
-    // 1. Find matching pending top-up
-    const { data: pendingData, error: pendingErr } = await supabase
+    // FIRST: Let's check ALL pending top-ups to see what's in the database
+    const { data: allPendingData, error: allPendingErr } = await supabase
+      .from('pending_topups')
+      .select('*')
+      .eq('status', 'pending');
+
+    if (allPendingErr) {
+      console.error('❌ Error fetching all pending top-ups:', allPendingErr);
+    } else {
+      console.log(`📋 Total pending top-ups in database: ${allPendingData?.length || 0}`);
+      if (allPendingData && allPendingData.length > 0) {
+        console.log('📋 All pending references with details:');
+        allPendingData.forEach(p => {
+          console.log(`  - Ref: "${p.reference_code}" (type: ${typeof p.reference_code}), Email: ${p.user_email}, Amount: ${p.amount}`);
+        });
+      } else {
+        console.log('⚠️ No pending top-ups found in the database!');
+        return;
+      }
+    }
+
+    // Strategy 1: Try exact match with the clean reference
+    console.log(`🔍 Strategy 1: Exact match for "${cleanRef}"`);
+    let { data: pendingData, error: pendingErr } = await supabase
       .from('pending_topups')
       .select('*')
       .eq('reference_code', cleanRef)
@@ -200,40 +211,98 @@ async function handleAutoCredit(
 
     if (pendingErr) {
       console.error('❌ Error fetching pending top-up:', pendingErr);
-      return;
+    }
+
+    // Strategy 2: If no match, try case-insensitive using ilike
+    if (!pendingData || pendingData.length === 0) {
+      console.log(`🔍 Strategy 2: Case-insensitive match for "${cleanRef}"`);
+      const { data: ilikeData, error: ilikeErr } = await supabase
+        .from('pending_topups')
+        .select('*')
+        .ilike('reference_code', cleanRef)
+        .eq('status', 'pending');
+
+      if (!ilikeErr && ilikeData && ilikeData.length > 0) {
+        pendingData = ilikeData;
+        console.log(`✅ Found ${ilikeData.length} match(es) using ILIKE`);
+      }
+    }
+
+    // Strategy 3: If still no match, try partial match (contains)
+    if (!pendingData || pendingData.length === 0) {
+      console.log(`🔍 Strategy 3: Partial match for "${cleanRef}"`);
+      // Extract the numeric part if it's DMH-XXXXXX
+      const numericPart = cleanRef.replace(/[^0-9]/g, '');
+      if (numericPart.length >= 4) {
+        const { data: partialData, error: partialErr } = await supabase
+          .from('pending_topups')
+          .select('*')
+          .ilike('reference_code', `%${numericPart}%`)
+          .eq('status', 'pending');
+
+        if (!partialErr && partialData && partialData.length > 0) {
+          pendingData = partialData;
+          console.log(`✅ Found ${partialData.length} match(es) using partial match on "${numericPart}"`);
+        }
+      }
+    }
+
+    // Strategy 4: If still no match, check if the reference exists with any status
+    if (!pendingData || pendingData.length === 0) {
+      console.log(`🔍 Strategy 4: Check if reference exists with any status`);
+      const { data: anyStatusData, error: anyStatusErr } = await supabase
+        .from('pending_topups')
+        .select('*')
+        .ilike('reference_code', cleanRef);
+
+      if (!anyStatusErr && anyStatusData && anyStatusData.length > 0) {
+        console.log(`⚠️ Found reference "${cleanRef}" but status is: ${anyStatusData[0].status}`);
+        if (anyStatusData[0].status === 'completed') {
+          console.log('⚠️ This top-up has already been completed!');
+        } else if (anyStatusData[0].status === 'pending') {
+          console.log('⚠️ Found as pending but wasn\'t caught by previous queries!');
+          pendingData = anyStatusData;
+        }
+      } else {
+        console.log(`❌ No top-up with reference "${cleanRef}" exists at all in the database`);
+        
+        // Let's check if there are any references that are similar
+        if (allPendingData && allPendingData.length > 0) {
+          console.log('🔍 Looking for similar references:');
+          const similar = allPendingData.filter(p => {
+            const dbRef = p.reference_code?.toUpperCase() || '';
+            return dbRef.includes(cleanRef.substring(0, 6)) || cleanRef.includes(dbRef.substring(0, 6));
+          });
+          if (similar.length > 0) {
+            console.log('⚠️ Found similar references:', similar.map(p => p.reference_code));
+          }
+        }
+        return;
+      }
     }
 
     if (!pendingData || pendingData.length === 0) {
       console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
-      
-      // Log all pending references for debugging
-      const { data: allPending } = await supabase
-        .from('pending_topups')
-        .select('reference_code, status, user_email')
-        .eq('status', 'pending');
-      
-      console.log('📋 All pending references:', allPending?.map(p => p.reference_code) || []);
-      console.log('📋 All pending data:', allPending);
-      
-      // Also check if there are any with similar reference (case insensitive)
-      if (allPending && allPending.length > 0) {
-        const similar = allPending.filter(p => 
-          p.reference_code && p.reference_code.toUpperCase().includes(cleanRef.substring(0, 6))
-        );
-        if (similar.length > 0) {
-          console.log('🔄 Found similar references:', similar.map(p => p.reference_code));
-        }
-      }
       return;
     }
 
+    // Process the first match
     const matchReq = pendingData[0];
-    console.log('✅ Found matching pending top-up:', matchReq);
+    console.log('✅ Found matching pending top-up:', {
+      id: matchReq.id,
+      reference_code: matchReq.reference_code,
+      user_email: matchReq.user_email,
+      user_name: matchReq.user_name,
+      amount: matchReq.amount,
+      status: matchReq.status,
+      created_at: matchReq.created_at
+    });
     
     const userEmail = matchReq.user_email;
     const userName = matchReq.user_name || 'Customer';
 
     // 2. Fetch target user profile
+    console.log(`🔍 Fetching user profile for email: ${userEmail}`);
     const { data: userData, error: userErr } = await supabase
       .from('profiles')
       .select('*')
@@ -267,13 +336,24 @@ async function handleAutoCredit(
     }
 
     // 4. Update Pending Top-Up status
-    await supabase
+    console.log(`🔄 Updating pending top-up status to 'completed'`);
+    const { error: updateTopupErr } = await supabase
       .from('pending_topups')
-      .update({ status: 'completed' })
+      .update({ 
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      })
       .eq('id', matchReq.id);
 
+    if (updateTopupErr) {
+      console.error('❌ Failed to update pending top-up status:', updateTopupErr.message);
+    } else {
+      console.log('✅ Pending top-up status updated to completed');
+    }
+
     // 5. Insert Wallet Transaction record
-    await supabase
+    console.log(`💳 Creating wallet transaction for ${amount} GHS`);
+    const { error: txErr } = await supabase
       .from('wallet_transactions')
       .insert([{
         user_id: profile.id,
@@ -285,6 +365,12 @@ async function handleAutoCredit(
         balance_after: newBalance,
         created_at: createdAt
       }]);
+
+    if (txErr) {
+      console.error('❌ Failed to insert wallet transaction:', txErr.message);
+    } else {
+      console.log('✅ Wallet transaction created');
+    }
 
     // 6. Update Webhook record as claimed
     const claimedString = `${userName} (${userEmail}) via Auto-Ref ${cleanRef}`;
@@ -312,9 +398,11 @@ async function handleAutoCredit(
         created_at: createdAt
       }]);
 
-    console.log(`✅✅✅ Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
+    console.log(`✅✅✅ SUCCESS! Auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
+    console.log(`✅✅✅ ===== AUTO-CREDIT COMPLETED =====`);
   } catch (err) {
     console.error('❌ Error in handleAutoCredit:', err);
+    console.error('❌ Stack trace:', err.stack);
   }
 }
 
