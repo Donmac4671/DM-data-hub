@@ -134,12 +134,15 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
       const req = generateTopUpReference(amountInput, momoNumberInput);
       console.log('📝 Generated reference:', req);
       
-      await createPendingTopUpInSupabase(
-        req.referenceCode,
-        req.amount,
-        user.email,
-        user.fullName || 'Customer'
-      );
+      // In TopUpModal.tsx, in handleGenerateRef:
+await createPendingTopUpInSupabase(
+  req.referenceCode,
+  req.amount,
+  user.email,
+  user.fullName || 'Customer',
+  user.id, // Pass the user ID
+  momoNumberInput // Pass the momo number
+);
 
       console.log('✅ Pending top-up saved to Supabase');
       setPendingReq(req);
@@ -290,31 +293,41 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
           </form>
         )}
 
-        {/* STEP 2: Instructions */}
-        {activeStep === 'instructions' && pendingReq && (
-          <div className="space-y-4 animate-in fade-in">
-            {/* Reference Box */}
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">
-                Your Unique Payment Reference Code:
-              </span>
-              <div className="flex items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-amber-500/20">
-                <span className="font-mono text-xl font-black text-amber-500 tracking-wider">
-                  {pendingReq.referenceCode}
-                </span>
-                <button
-                  onClick={() => copyToClipboard(pendingReq.referenceCode, 'refCode')}
-                  className="px-3 py-1.5 bg-amber-500 text-black rounded-lg text-xs font-bold flex items-center space-x-1 hover:bg-amber-400 transition-colors"
-                >
-                  {copiedField === 'refCode' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedField === 'refCode' ? 'Copied!' : 'Copy'}</span>
-                </button>
-              </div>
-              <p className="text-[11px] text-zinc-500">
-                Please enter this reference code in the reference/reason field when transferring payment.
-              </p>
-            </div>
-
+        {/* STEP 2: Instructions & Reference Code */}
+{activeStep === 'instructions' && pendingReq && (
+  <div className="space-y-4 animate-in fade-in">
+    {/* Reference Box */}
+    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+      <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">
+        Your Unique Payment Reference Code:
+      </span>
+      <div className="flex items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-amber-500/20">
+        <span className="font-mono text-xl font-black text-amber-500 tracking-wider">
+          {pendingReq.referenceCode}
+        </span>
+        <button
+          onClick={() => copyToClipboard(pendingReq.referenceCode, 'refCode')}
+          className="px-3 py-1.5 bg-amber-500 text-black rounded-lg text-xs font-bold flex items-center space-x-1 hover:bg-amber-400 transition-colors"
+        >
+          {copiedField === 'refCode' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          <span>{copiedField === 'refCode' ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
+      
+      {/* NEW: Add expiry time display here */}
+      <div className="flex justify-between items-center text-xs bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+        <p className="text-zinc-600 dark:text-zinc-400">
+          This reference will expire in:
+        </p>
+        <span className="text-amber-600 dark:text-amber-400 font-bold">
+          ⏰ 30 minutes
+        </span>
+      </div>
+      
+      <p className="text-[11px] text-zinc-500">
+        Please enter this reference code in the reference/reason field when transferring payment.
+      </p>
+    </div>
             {/* Merchant Details */}
             <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 space-y-2 text-xs">
               <div className="flex justify-between items-center pb-2 border-b border-zinc-200 dark:border-zinc-700">
