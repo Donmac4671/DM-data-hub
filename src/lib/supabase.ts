@@ -245,47 +245,59 @@ export async function createPendingTopUpInSupabase(
   referenceCode: string,
   amount: number,
   userEmail: string,
-  userName: string
+  userName: string,
+  userId: string, // Add this parameter
+  momoNumberToPay: string // Add this parameter
 ): Promise<any> {
-  // Use admin client if available, otherwise fallback to regular client
+  console.log('🔍 createPendingTopUpInSupabase called with:', {
+    referenceCode,
+    amount,
+    userEmail,
+    userName,
+    userId,
+    momoNumberToPay
+  });
+
   const client = supabaseAdmin || supabase;
   
   if (!client) {
-    console.warn('Supabase not configured, saving to localStorage fallback');
+    console.warn('❌ Supabase not configured, saving to localStorage fallback');
     savePendingTopupToLocalStorage(referenceCode, amount);
     return { reference_code: referenceCode, amount, status: 'pending' };
   }
 
   try {
-    console.log('📝 Inserting pending top-up:', {
-      referenceCode,
-      amount,
-      userEmail,
-      userName
-    });
+    // Match the exact table structure
+    const insertData = {
+      id: `topup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, // Generate a unique ID
+      user_id: userId,
+      user_email: userEmail.toLowerCase().trim(),
+      user_name: userName || 'Customer',
+      reference_code: referenceCode,
+      amount: amount,
+      momo_number_to_pay: momoNumberToPay || '0549358359', // Default merchant number
+      status: 'pending',
+      expires_at: new Date(Date.now() + 30 * 60000).toISOString(), // 30 minutes from now
+      created_at: new Date().toISOString()
+    };
+
+    console.log('📝 Inserting pending top-up with data:', insertData);
 
     const { data, error } = await client
       .from('pending_topups')
-      .insert([{
-        reference_code: referenceCode,
-        amount: amount,
-        user_email: userEmail.toLowerCase().trim(),
-        user_name: userName || 'Customer',
-        status: 'pending',
-        created_at: new Date().toISOString()
-      }])
+      .insert([insertData])
       .select()
       .single();
 
     if (error) {
-      console.error('❌ Error creating pending top-up in Supabase:', error);
+      console.error('❌ Error creating pending top-up:', error);
       console.error('❌ Error details:', {
         code: error.code,
         message: error.message,
         details: error.details,
         hint: error.hint
       });
-      // Fallback to localStorage
+      
       savePendingTopupToLocalStorage(referenceCode, amount);
       return { reference_code: referenceCode, amount, status: 'pending' };
     }
