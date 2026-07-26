@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Smartphone
 } from 'lucide-react';
+import { createPendingTopUpInSupabase } from '../supabaseClient';
 
 interface TopUpModalProps {
   isOpen: boolean;
@@ -19,13 +20,15 @@ interface TopUpModalProps {
 }
 
 export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
-  const { generateTopUpReference } = useApp();
+  const { generateTopUpReference, user } = useApp();
 
   const [activeStep, setActiveStep] = useState<'amount' | 'instructions'>('amount');
   const [amountInput, setAmountInput] = useState<number>(50);
   const [momoNumberInput, setMomoNumberInput] = useState<string>('0549358359');
   const [pendingReq, setPendingReq] = useState<PendingTopUpRequest | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -35,12 +38,42 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const handleGenerateRef = (e: React.FormEvent) => {
+  const handleGenerateRef = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (amountInput < 1) return;
-    const req = generateTopUpReference(amountInput, momoNumberInput);
-    setPendingReq(req);
-    setActiveStep('instructions');
+    if (amountInput < 1) {
+      setError('Please enter a valid amount (minimum GHS 1.00)');
+      return;
+    }
+
+    if (!user) {
+      setError('Please log in to top up your wallet');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      // Step 1: Generate reference code
+      const req = generateTopUpReference(amountInput, momoNumberInput);
+      
+      // Step 2: Save to Supabase
+      await createPendingTopUpInSupabase(
+        req.referenceCode,
+        req.amount,
+        user.email,
+        user.fullName || 'Customer'
+      );
+
+      // Step 3: Update local state
+      setPendingReq(req);
+      setActiveStep('instructions');
+    } catch (err: any) {
+      console.error('Error generating top-up reference:', err);
+      setError(err.message || 'Failed to generate reference. Please try again.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -64,6 +97,14 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-medium flex items-center space-x-2">
+            <X className="w-4 h-4" />
+            <span>{error}</span>
+          </div>
+        )}
 
         {/* Navigation Tabs inside modal */}
         <div className="flex rounded-xl bg-zinc-100 dark:bg-zinc-800/60 p-1 text-xs font-bold">
@@ -109,6 +150,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                   value={amountInput}
                   onChange={e => setAmountInput(parseFloat(e.target.value) || 0)}
                   className="w-full pl-14 pr-4 py-3 rounded-2xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-extrabold text-lg text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
+                  disabled={isGenerating}
                 />
               </div>
             </div>
@@ -125,6 +167,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                       ? 'bg-amber-500 text-black border-amber-500 font-black'
                       : 'bg-zinc-50 dark:bg-zinc-800/80 border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300'
                   }`}
+                  disabled={isGenerating}
                 >
                   GHS {amt}
                 </button>
@@ -144,16 +187,27 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                   onChange={e => setMomoNumberInput(e.target.value)}
                   placeholder="e.g. 0549358359"
                   className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-bold text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
+                  disabled={isGenerating}
                 />
               </div>
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-2xl transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center space-x-2"
+              disabled={isGenerating}
+              className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs rounded-2xl transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>Generate Payment Reference</span>
-              <ArrowRight className="w-4 h-4" />
+              {isGenerating ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                  <span>Generating Reference...</span>
+                </>
+              ) : (
+                <>
+                  <span>Generate Payment Reference</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </form>
         )}
