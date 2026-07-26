@@ -207,6 +207,182 @@ export async function updateProfileInSupabase(profileIdOrEmail: string, updates:
 }
 
 // ==========================================
+// PENDING TOP-UPS SUPABASE INTEGRATION (NEW)
+// ==========================================
+
+export async function createPendingTopUpInSupabase(
+  referenceCode: string,
+  amount: number,
+  userEmail: string,
+  userName: string
+): Promise<any> {
+  if (!supabase) {
+    console.warn('Supabase not configured, saving to localStorage fallback');
+    savePendingTopupToLocalStorage(referenceCode, amount);
+    return { reference_code: referenceCode, amount, status: 'pending' };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('pending_topups')
+      .insert([{
+        reference_code: referenceCode,
+        amount: amount,
+        user_email: userEmail.toLowerCase().trim(),
+        user_name: userName || 'Customer',
+        status: 'pending',
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating pending top-up in Supabase:', error);
+      // Fallback to localStorage
+      savePendingTopupToLocalStorage(referenceCode, amount);
+      return { reference_code: referenceCode, amount, status: 'pending' };
+    }
+
+    console.log('✅ Pending top-up created in Supabase:', data);
+    
+    // Also save to localStorage as backup
+    savePendingTopupToLocalStorage(referenceCode, amount);
+    
+    return data;
+  } catch (err) {
+    console.error('Failed to create pending top-up:', err);
+    savePendingTopupToLocalStorage(referenceCode, amount);
+    return { reference_code: referenceCode, amount, status: 'pending' };
+  }
+}
+
+export async function fetchPendingTopupsFromSupabase(userEmail: string): Promise<any[]> {
+  if (!supabase) {
+    return getPendingTopupsFromLocalStorage();
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('pending_topups')
+      .select('*')
+      .eq('user_email', userEmail.toLowerCase().trim())
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching pending top-ups:', error);
+      return getPendingTopupsFromLocalStorage();
+    }
+
+    // Sync with localStorage
+    if (data && data.length > 0) {
+      localStorage.setItem('pendingTopups', JSON.stringify(data));
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error('Error in fetchPendingTopupsFromSupabase:', err);
+    return getPendingTopupsFromLocalStorage();
+  }
+}
+
+export async function completePendingTopupInSupabase(referenceCode: string): Promise<void> {
+  if (!supabase) return;
+
+  try {
+    const { error } = await supabase
+      .from('pending_topups')
+      .update({ 
+        status: 'completed',
+        completed_at: new Date().toISOString()
+      })
+      .eq('reference_code', referenceCode);
+
+    if (error) {
+      console.error('Error completing pending top-up:', error);
+    } else {
+      console.log('✅ Pending top-up marked as completed:', referenceCode);
+      // Remove from localStorage
+      removePendingTopupFromLocalStorage(referenceCode);
+    }
+  } catch (err) {
+    console.error('Error in completePendingTopupInSupabase:', err);
+  }
+}
+
+export async function syncPendingTopupsWithSupabase(userEmail: string, userName: string): Promise<void> {
+  const localPending = getPendingTopupsFromLocalStorage();
+  
+  if (localPending.length === 0) return;
+
+  console.log(`🔄 Syncing ${localPending.length} pending top-ups to Supabase...`);
+
+  for (const item of localPending) {
+    // Check if already exists in Supabase
+    const { data: existing } = await supabase
+      .from('pending_topups')
+      .select('id')
+      .eq('reference_code', item.reference_code)
+      .single();
+
+    if (!existing) {
+      // Not in Supabase, upload it
+      await supabase
+        .from('pending_topups')
+        .insert([{
+          reference_code: item.reference_code,
+          amount: item.amount,
+          user_email: userEmail.toLowerCase().trim(),
+          user_name: userName || 'Customer',
+          status: item.status || 'pending',
+          created_at: item.created_at || new Date().toISOString()
+        }]);
+    }
+  }
+
+  // Clear localStorage after successful sync
+  localStorage.removeItem('pendingTopups');
+  console.log('✅ Pending top-ups synced to Supabase');
+}
+
+// ==========================================
+// LOCAL STORAGE FALLBACK FUNCTIONS
+// ==========================================
+
+function savePendingTopupToLocalStorage(referenceCode: string, amount: number) {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pendingTopups') || '[]');
+    pending.push({
+      reference_code: referenceCode,
+      amount: amount,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    });
+    localStorage.setItem('pendingTopups', JSON.stringify(pending));
+  } catch (err) {
+    console.error('Error saving to localStorage:', err);
+  }
+}
+
+function getPendingTopupsFromLocalStorage(): any[] {
+  try {
+    return JSON.parse(localStorage.getItem('pendingTopups') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function removePendingTopupFromLocalStorage(referenceCode: string) {
+  try {
+    const pending = JSON.parse(localStorage.getItem('pendingTopups') || '[]');
+    const filtered = pending.filter((p: any) => p.reference_code !== referenceCode);
+    localStorage.setItem('pendingTopups', JSON.stringify(filtered));
+  } catch (err) {
+    console.error('Error removing from localStorage:', err);
+  }
+}
+
+// ==========================================
 // ORDERS SUPABASE INTEGRATION
 // ==========================================
 export async function fetchOrdersFromSupabase(): Promise<any[]> {
@@ -593,4 +769,3 @@ export async function deleteWebhookFromSupabase(momoTxnId: string): Promise<void
     console.error('Error in deleteWebhookFromSupabase:', err);
   }
 }
-
