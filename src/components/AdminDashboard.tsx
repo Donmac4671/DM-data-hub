@@ -850,28 +850,44 @@ export const AdminDashboard: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="flex items-center space-x-2 pt-2">
-                  <input
-                    type="text"
-                    placeholder="Type reply to customer..."
-                    value={replyTextMap[comp.id] || ''}
-                    onChange={e => setReplyTextMap({ ...replyTextMap, [comp.id]: e.target.value })}
-                    className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border text-xs rounded-xl"
-                  />
-                  <button
-                    onClick={() => handleSendComplaintReply(comp.id)}
-                    className="px-4 py-2 bg-blue-600 text-white font-black text-xs rounded-xl uppercase tracking-wider flex items-center space-x-1"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Reply</span>
-                  </button>
-                  <button
-                    onClick={() => deleteComplaint(comp.id)}
-                    className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
-                    title="Delete Complaint"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
+                  <div className="flex-1 flex items-center space-x-2">
+                    <input
+                      type="text"
+                      placeholder="Type reply to customer..."
+                      value={replyTextMap[comp.id] || ''}
+                      onChange={e => setReplyTextMap({ ...replyTextMap, [comp.id]: e.target.value })}
+                      className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 border text-xs rounded-xl"
+                    />
+                    <button
+                      onClick={() => handleSendComplaintReply(comp.id)}
+                      className="px-4 py-2 bg-blue-600 text-white font-black text-xs rounded-xl uppercase tracking-wider flex items-center space-x-1"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Reply</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <select
+                      value={comp.status}
+                      onChange={e => updateComplaintStatus(comp.id, e.target.value as any)}
+                      className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-[10px] font-black rounded-lg uppercase tracking-wider"
+                    >
+                      <option value="open">Open</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="resolved">Resolved</option>
+                      <option value="closed">Closed / End Chat</option>
+                    </select>
+
+                    <button
+                      onClick={() => deleteComplaint(comp.id)}
+                      className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                      title="Delete Complaint"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

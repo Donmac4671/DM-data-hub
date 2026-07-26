@@ -13,16 +13,21 @@ export function renderStatusBadge(status: string) {
     bgClass = 'bg-emerald-500/20 border-emerald-500/50';
     textClass = 'text-emerald-400 font-extrabold uppercase';
     glowClass = 'shadow-[0_0_12px_rgba(16,185,129,0.5)] animate-pulse';
-  } else if (norm === 'pending' || norm === 'processing') {
-    label = norm;
+  } else if (norm === 'pending') {
+    label = 'pending';
     bgClass = 'bg-amber-500/20 border-amber-500/50';
     textClass = 'text-amber-400 font-extrabold uppercase';
     glowClass = 'shadow-[0_0_12px_rgba(245,158,11,0.5)] animate-pulse';
+  } else if (norm === 'processing') {
+    label = 'processing';
+    bgClass = 'bg-blue-500/20 border-blue-500/50';
+    textClass = 'text-blue-400 font-extrabold uppercase';
+    glowClass = 'shadow-[0_0_12px_rgba(59,130,246,0.5)] animate-pulse';
   } else if (norm === 'waiting') {
     label = 'waiting';
-    bgClass = 'bg-sky-500/20 border-sky-500/50';
-    textClass = 'text-sky-400 font-extrabold uppercase';
-    glowClass = 'shadow-[0_0_12px_rgba(14,165,233,0.5)] animate-pulse';
+    bgClass = 'bg-zinc-500/20 border-zinc-500/50';
+    textClass = 'text-zinc-400 font-extrabold uppercase';
+    glowClass = 'shadow-[0_0_12px_rgba(156,163,175,0.5)] animate-pulse';
   } else {
     label = norm || 'failed';
     bgClass = 'bg-rose-500/20 border-rose-500/50';

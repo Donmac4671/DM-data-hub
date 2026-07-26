@@ -103,8 +103,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
                 </span>
                 <input
                   type="number"
-                  min="1"
-                  step="1"
+                  min="0.01"
+                  step="any"
                   required
                   value={amountInput}
                   onChange={e => setAmountInput(parseFloat(e.target.value) || 0)}

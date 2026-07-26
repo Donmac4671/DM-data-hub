@@ -9,7 +9,7 @@ interface OrdersViewProps {
 }
 
 export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) => {
-  const { orders, currentUser, reorderOrder } = useApp();
+  const { orders, currentUser, reorderOrder, claimOrderRefund } = useApp();
 
   const getTodayStr = () => new Date().toISOString().split('T')[0];
 
@@ -77,15 +77,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-zinc-100 dark:border-zinc-800 gap-2">
                 <div className="flex items-center space-x-3">
                   <span className="font-extrabold text-sm text-zinc-900 dark:text-zinc-100">{ord.orderNumber}</span>
-                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                    ord.status === 'completed'
-                      ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
-                      : ord.status === 'failed'
-                      ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
-                      : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                  }`}>
-                    {ord.status === 'pending' ? 'PENDING (3-30 MINS)' : ord.status.toUpperCase()}
-                  </span>
+                  {useApp().updateOrderStatus ? (
+                    // Utilize standardized glowing status badge helper
+                    renderStatusBadge(ord.status)
+                  ) : (
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
+                      ord.status === 'completed'
+                        ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                        : ord.status === 'failed'
+                        ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                        : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                    }`}>
+                      {ord.status === 'pending' ? 'PENDING (3-30 MINS)' : ord.status.toUpperCase()}
+                    </span>
+                  )}
                 </div>
 
                 <span className="text-xs text-zinc-400 font-mono">
@@ -114,6 +119,15 @@ export const OrdersView: React.FC<OrdersViewProps> = ({ onSelectReceiptOrder }) 
                 </div>
 
                 <div className="flex items-center space-x-2">
+                  {ord.status === 'failed' && (
+                    <button
+                      onClick={() => claimOrderRefund(ord.id)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-extrabold flex items-center space-x-1 animate-pulse shadow-lg shadow-rose-500/20"
+                    >
+                      <span>Claim Refund</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={() => reorderOrder(ord)}
                     className="px-3 py-1.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-bold flex items-center space-x-1"

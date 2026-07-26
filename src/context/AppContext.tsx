@@ -93,6 +93,7 @@ interface AppContextType {
   placeOrder: (recipientPhone: string, paymentMethod: 'wallet' | 'direct_momo', momoTxnId?: string) => { success: boolean; message: string; order?: Order };
   updateOrderStatus: (orderId: string, status: OrderStatus, failureReason?: string) => void;
   reorderOrder: (order: Order) => void;
+  claimOrderRefund: (orderId: string) => void;
   
   // Wallet & Top-Up
   walletTransactions: WalletTransaction[];
@@ -597,6 +598,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (isSupabaseConfigured) {
       upsertPackageInSupabase(newPkg);
     }
+    localStorage.setItem('dmh_packages', JSON.stringify([...packages, newPkg]));
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     addAuditLog('ADD_PACKAGE', `Added new package: ${newPkg.name} - GHS ${newPkg.price}`);
     showToast('Package Created', `${newPkg.name} added successfully.`, 'success');
   };
@@ -613,6 +616,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         return p;
       });
+      localStorage.setItem('dmh_packages', JSON.stringify(updated));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
       return updated;
     });
     addAuditLog('UPDATE_PACKAGE', `Updated package ID: ${id}`);
@@ -620,10 +625,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deletePackage = (id: string) => {
-    setPackages(prev => prev.filter(p => p.id !== id));
+    const filtered = packages.filter(p => p.id !== id);
+    setPackages(filtered);
     if (isSupabaseConfigured) {
       deletePackageFromSupabase(id);
     }
+    localStorage.setItem('dmh_packages', JSON.stringify(filtered));
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     addAuditLog('DELETE_PACKAGE', `Deleted package ID: ${id}`);
     showToast('Package Deleted', 'Package removed from catalog.', 'info');
   };
@@ -653,6 +661,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [cart]);
 
   const addToCart = (item: OrderItem) => {
+    const netObj = networks.find(n => n.id === item.network);
+    if (netObj && !netObj.online) {
+      showToast('Network Offline', `${netObj.name} is currently offline. Purchases are temporarily disabled.`, 'error');
+      return;
+    }
     setCart(prev => [...prev, item]);
     showToast('Added to Cart', `${item.packageName} added for ${item.recipientPhone}`, 'success');
   };
@@ -693,8 +706,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, message: 'Your cart is empty!' };
     }
 
-    // Validate network prefix and special exception for each cart item
+    // Validate network prefix and special exception for each cart item, and check if network is offline
     for (const item of cart) {
+      const netObj = networks.find(n => n.id === item.network);
+      if (netObj && !netObj.online) {
+        return {
+          success: false,
+          message: `${netObj.name} is currently offline. Purchases are temporarily disabled for this network.`,
+        };
+      }
+
       const targetPhone = item.recipientPhone || recipientPhone;
       const validation = validateGhanaNetworkPhone(targetPhone, item.network);
       if (!validation.isValid) {
@@ -806,6 +827,62 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const reorderOrder = (order: Order) => {
     order.items.forEach(item => addToCart(item));
     showToast('Items Added to Cart', `${order.items.length} item(s) from #${order.orderNumber} reordered.`, 'info');
+  };
+
+  const claimOrderRefund = (orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    if (order.status !== 'failed') {
+      showToast('Refund Error', 'Only failed orders can be refunded.', 'error');
+      return;
+    }
+
+    const refundAmt = order.totalAmount;
+    const newBal = Number((currentUser.walletBalance + refundAmt).toFixed(2));
+
+    // Update current user balance
+    const updatedUser = { ...currentUser, walletBalance: newBal };
+    setCurrentUser(updatedUser);
+    setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+
+    if (isSupabaseConfigured) {
+      updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
+    }
+
+    // Update order status to 'refunded'
+    setOrders(prev => {
+      const next = prev.map(o => o.id === orderId ? { ...o, status: 'refunded' as any } : o);
+      localStorage.setItem('dmh_orders', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
+
+    if (isSupabaseConfigured) {
+      updateOrderStatusInSupabase(orderId, 'refunded' as any);
+    }
+
+    // Record wallet transaction
+    const tx: WalletTransaction = {
+      id: `tx-${Date.now()}`,
+      userId: currentUser.id,
+      amount: refundAmt,
+      type: 'refund' as any,
+      description: `Refund for Failed Order #${order.orderNumber}`,
+      momoTxnId: '',
+      balanceAfter: newBal,
+      createdAt: new Date().toISOString(),
+    };
+    setWalletTransactions(prev => [tx, ...prev]);
+
+    addNotification({
+      userId: currentUser.id,
+      title: '↩️ Order Refunded Successfully!',
+      message: `Failed Order #${order.orderNumber} was refunded. GHS ${refundAmt.toFixed(2)} was credited to your wallet.`,
+      type: 'wallet',
+    });
+
+    addAuditLog('ORDER_REFUND_CLAIMED', `User refunded GHS ${refundAmt} for failed order #${order.orderNumber}`);
+    showToast('Refund Processed!', `GHS ${refundAmt.toFixed(2)} refunded to your wallet!`, 'success');
   };
 
   // Top Up Reference Generation
@@ -1029,6 +1106,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
+  // Brute force claims tracking
+  const [failedClaimsCount, setFailedClaimsCount] = useState<Record<string, number>>({});
+
   // Claims
   const [claims, setClaims] = useState<PaymentClaim[]>(() =>
     getStorageItem('dmh_claims', [])
@@ -1044,7 +1124,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     amount: number;
     momoNumber: string;
     screenshotUrl?: string;
-  }) => {
+  }): { success: boolean; message: string } | void => {
     const cleanTxn = claimData.momoTxnId.trim().toUpperCase();
     const cleanRef = claimData.referenceCode?.trim().toUpperCase();
 
@@ -1055,9 +1135,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
            w.status === 'unclaimed'
     );
 
-    const matchedPending = pendingTopUpRequests.find(
-      r => cleanRef && r.referenceCode.toUpperCase() === cleanRef && r.status === 'pending'
-    );
+    let matchedPending = null;
+    if (cleanRef) {
+      matchedPending = pendingTopUpRequests.find(
+        r => r.referenceCode.toUpperCase() === cleanRef && r.status === 'pending'
+      );
+    }
+
+    // Check expiry for matchedPending (30-minute expiry constraint)
+    if (matchedPending) {
+      const isExpired = new Date().getTime() > new Date(matchedPending.expiresAt).getTime();
+      if (isExpired) {
+        matchedPending = null;
+      }
+    }
 
     const isAutoCredible = !!matchedLog || !!matchedPending;
     let finalAmount = claimData.amount;
@@ -1069,6 +1160,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     if (isAutoCredible) {
+      // Reset failed attempts upon successful claim
+      setFailedClaimsCount(prev => ({ ...prev, [currentUser.id]: 0 }));
+
       // Auto-approve and credit wallet instantly
       const newBal = Number((currentUser.walletBalance + finalAmount).toFixed(2));
       const updatedUser = { ...currentUser, walletBalance: newBal };
@@ -1135,33 +1229,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       addAuditLog('AUTO_CLAIM_APPROVED', `Instant claim verified for GHS ${finalAmount}. MoMo Txn: ${claimData.momoTxnId}`);
       showToast('Payment Verified!', `GHS ${finalAmount.toFixed(2)} credited to your wallet instantly!`, 'success');
+      return { success: true, message: `Successfully claimed GHS ${finalAmount.toFixed(2)}!` };
     } else {
-      // Secure Fallback: NOT auto-approved. Saved as pending for Admin verification.
-      const newClaim: PaymentClaim = {
-        id: `claim-${Date.now()}`,
-        userId: currentUser.id,
-        userEmail: currentUser.email,
-        userName: currentUser.fullName,
-        ...claimData,
-        amount: finalAmount,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-      };
+      // Secure protection against brute-force invalid claims
+      const currentFailures = (failedClaimsCount[currentUser.id] || 0) + 1;
+      setFailedClaimsCount(prev => ({ ...prev, [currentUser.id]: currentFailures }));
 
-      setClaims(prev => [newClaim, ...prev]);
-      if (isSupabaseConfigured) {
-        createClaimInSupabase(newClaim);
+      if (currentFailures >= 3) {
+        // Block the user instantly in database & force logout
+        toggleBlockUser(currentUser.id);
+        return {
+          success: false,
+          message: 'This account has been blocked or suspended due to too many invalid payment claim attempts.',
+        };
       }
 
-      addNotification({
-        userId: currentUser.id,
-        title: '⏳ Payment Claim Submitted for Review',
-        message: `Your payment claim for GHS ${finalAmount.toFixed(2)} (Txn ID: ${claimData.momoTxnId}) has been submitted. Admin will review and credit your wallet shortly.`,
-        type: 'wallet',
-      });
-
-      addAuditLog('CLAIM_SUBMITTED_PENDING', `User ${currentUser.email} submitted pending claim for Txn ${cleanTxn} (GHS ${finalAmount})`);
-      showToast('Claim Submitted!', 'Details sent to Admin for review & manual crediting.', 'info');
+      return {
+        success: false,
+        message: `No matching payment was found for Transaction ID ${cleanTxn} and GHS ${claimData.amount.toFixed(2)}. (Attempt ${currentFailures} of 3 before account block).`,
+      };
     }
   };
 
@@ -1671,6 +1757,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         placeOrder,
         updateOrderStatus,
         reorderOrder,
+        claimOrderRefund,
         walletTransactions,
         pendingTopUpRequests,
         generateTopUpReference,

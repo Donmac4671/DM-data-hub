@@ -51,7 +51,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     showToast,
   } = useApp();
 
-  const [selectedNetwork, setSelectedNetwork] = useState<NetworkId | 'all'>('all');
+  const [selectedNetwork, setSelectedNetwork] = useState<NetworkId>('mtn');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Stats Calculations
@@ -70,7 +70,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   // Filtered packages
   const filteredPackages = packages.filter(pkg => {
     if (pkg.status === 'hidden') return false;
-    if (selectedNetwork !== 'all' && pkg.network !== selectedNetwork) return false;
+    if (pkg.network !== selectedNetwork) return false;
     return matchDataPackage(pkg, searchQuery);
   });
 
