@@ -73,6 +73,7 @@ function savePendingTopupToLocalStorage(referenceCode: string, amount: number) {
       reference_code: referenceCode,
       amount: amount,
       status: 'pending',
+      expires_at: new Date(Date.now() + 30 * 60000).toISOString(),
       created_at: new Date().toISOString()
     });
     localStorage.setItem('pendingTopups', JSON.stringify(pending));
@@ -246,8 +247,8 @@ export async function createPendingTopUpInSupabase(
   amount: number,
   userEmail: string,
   userName: string,
-  userId: string, // Add this parameter
-  momoNumberToPay: string // Add this parameter
+  userId: string,
+  momoNumberToPay: string
 ): Promise<any> {
   console.log('🔍 createPendingTopUpInSupabase called with:', {
     referenceCode,
@@ -267,21 +268,24 @@ export async function createPendingTopUpInSupabase(
   }
 
   try {
-    // Match the exact table structure
+    // Calculate expiry time (30 minutes from now)
+    const expiresAt = new Date(Date.now() + 30 * 60000).toISOString();
+    
     const insertData = {
-      id: `topup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, // Generate a unique ID
+      id: `topup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       user_id: userId,
       user_email: userEmail.toLowerCase().trim(),
       user_name: userName || 'Customer',
       reference_code: referenceCode,
       amount: amount,
-      momo_number_to_pay: momoNumberToPay || '0549358359', // Default merchant number
+      momo_number_to_pay: momoNumberToPay || '0549358359',
       status: 'pending',
-      expires_at: new Date(Date.now() + 30 * 60000).toISOString(), // 30 minutes from now
+      expires_at: expiresAt, // 30 minutes expiry
       created_at: new Date().toISOString()
     };
 
     console.log('📝 Inserting pending top-up with data:', insertData);
+    console.log(`⏰ This reference expires at: ${new Date(expiresAt).toLocaleString()}`);
 
     const { data, error } = await client
       .from('pending_topups')
@@ -311,7 +315,6 @@ export async function createPendingTopUpInSupabase(
     return { reference_code: referenceCode, amount, status: 'pending' };
   }
 }
-
 // ==========================================
 // ORDERS SUPABASE INTEGRATION
 // ==========================================
