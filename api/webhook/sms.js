@@ -47,29 +47,66 @@ function extractWebhookData(body) {
   let network = (typeof body === 'object' && body.network) || null;
   let referenceCode = (typeof body === 'object' && (body.reference || body.refCode)) || null;
 
+  console.log('📝 Raw SMS Content:', rawSms);
+
   if (rawSms) {
     // Clean OCR typos e.g. 18.OO -> 18.00
     const smsCleaned = rawSms
       .replace(/(\d+)\.[OOoo]/g, '$1.00')
       .replace(/(\d+)\.[Oo]/g, '$1.00');
 
-    // 1. Transaction ID extraction
+    // 1. TRANSACTION ID extraction - PRIORITY FIX
     if (!momoTxnId) {
-      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Trans ID|Ref ID|ID|Ref)[:\s]*([0-9A-Za-z]{6,20})/i) ||
-                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,16})/i) ||
-                       smsCleaned.match(/\b([0-9]{9,16})\b/);
-      if (txnMatch) {
-        momoTxnId = txnMatch[1].trim();
+      // Try multiple patterns for 11-digit transaction IDs (like 86061590578)
+      const txnPatterns = [
+        // Pattern for exactly 11 digits (most common for MoMo)
+        /\b(\d{11})\b/,
+        // Pattern for 8-16 digits
+        /\b(\d{8,16})\b/,
+        // Pattern with "Transaction ID:" or "Txn ID:" prefix
+        /(?:Transaction ID|Txn ID|Trans ID|Transaction Id|Ref ID)[:\s]*(\d{8,16})/i,
+        // Pattern with "ID:" or "Ref:" prefix
+        /(?:ID|Ref)[:\s]*(\d{8,16})/i,
+        // Any number with 9+ digits
+        /\b(\d{9,20})\b/
+      ];
+
+      for (const pattern of txnPatterns) {
+        const match = smsCleaned.match(pattern);
+        if (match) {
+          const potentialId = match[1].trim();
+          // Verify it's a valid transaction ID (all digits, length 8-16)
+          if (/^\d{8,16}$/.test(potentialId)) {
+            momoTxnId = potentialId;
+            console.log('✅ Extracted Transaction ID:', momoTxnId);
+            break;
+          }
+        }
+      }
+
+      // If still no match, try looking for any number after "Reference" or "Ref"
+      if (!momoTxnId) {
+        const refMatch = smsCleaned.match(/Reference[:\s]*([^\s,.\n]+)/i);
+        if (refMatch) {
+          const refText = refMatch[1].trim();
+          // Check if it's a numeric transaction ID
+          if (/^\d{8,16}$/.test(refText)) {
+            momoTxnId = refText;
+            console.log('✅ Extracted Transaction ID from Reference field:', momoTxnId);
+          }
+        }
       }
     }
 
-    // 2. Amount extraction (e.g. GHS 8.00, GHS 18.OO, GHS 20.00, GHS92, 10.00 GHS)
+    // 2. Amount extraction
     if (!amount || isNaN(amount)) {
       const amountMatch = smsCleaned.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
                           smsCleaned.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i) ||
-                          smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
+                          smsCleaned.match(/(?:received|credited|payment of|amount|paid)\s+(?:GHS|GHC|GH₵|₵)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
+                          smsCleaned.match(/\b([0-9]+\.[0-9]{2})\b/); // Any decimal with 2 places
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
+        console.log('💰 Extracted Amount:', amount);
       }
     }
 
@@ -85,29 +122,20 @@ function extractWebhookData(body) {
       }
     }
 
-    // 4. FIXED Reference Code extraction - Priority order
+    // 4. REFERENCE CODE extraction (for DMH-XXXXXX format)
     if (!referenceCode) {
-      // Log the SMS for debugging
-      console.log('Raw SMS for ref extraction:', smsCleaned);
-      
-      // PRIORITY 1: Look for DMH pattern (your specific format)
+      // Try to find DMH reference code
       const dmhMatch = smsCleaned.match(/(DMH-\d{6})/i);
       if (dmhMatch) {
         referenceCode = dmhMatch[1].toUpperCase();
-        console.log('Extracted DMH reference:', referenceCode);
+        console.log('📌 Extracted DMH Reference Code:', referenceCode);
       } else {
-        // PRIORITY 2: Look for "Reference:" or "Ref:" followed by a code
-        // This fixes the issue where it was capturing too much text
+        // Try to find any reference code format
         const refPatterns = [
-          // Pattern: Reference: CODE (stops at comma, space, newline, or period)
           /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          // Pattern: Ref: CODE
           /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          // Pattern: Reference Code: CODE
-          /Reference Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-          // Pattern: Any alphanumeric code with hyphen (like ABC-123456)
+          /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
           /\b([A-Z]{2,4}-\d{4,8})\b/,
-          // Pattern: Any 6+ character alphanumeric code (fallback)
           /\b([A-Za-z0-9]{6,12})\b/
         ];
         
@@ -115,12 +143,11 @@ function extractWebhookData(body) {
           const match = smsCleaned.match(pattern);
           if (match) {
             let code = match[1].trim();
-            // Clean the code - remove any trailing punctuation
             code = code.replace(/[,;.:!?]$/, '');
-            // Only accept codes that are alphanumeric with possible hyphens/underscores
-            if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4) {
+            // Make sure it's not a transaction ID (all digits)
+            if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
               referenceCode = code;
-              console.log('Extracted reference from pattern:', referenceCode, 'Pattern:', pattern);
+              console.log('📌 Extracted Reference Code:', referenceCode);
               break;
             }
           }
@@ -130,7 +157,14 @@ function extractWebhookData(body) {
   }
 
   const result = { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
-  console.log('Extraction result:', result);
+  console.log('📊 Final Extraction Result:', {
+    momoTxnId,
+    amount,
+    network,
+    referenceCode,
+    senderPhone
+  });
+  
   return result;
 }
 
@@ -144,17 +178,17 @@ async function handleAutoCredit(
   createdAt
 ) {
   if (!supabase) {
-    console.log('Supabase not configured, skipping auto-credit');
+    console.log('❌ Supabase not configured, skipping auto-credit');
     return;
   }
   
   if (!referenceCode) {
-    console.log('No reference code found, skipping auto-credit');
+    console.log('⚠️ No reference code found, skipping auto-credit');
     return;
   }
 
   const cleanRef = referenceCode.trim().toUpperCase();
-  console.log(`Looking for pending top-up with reference: "${cleanRef}"`);
+  console.log(`🔍 Looking for pending top-up with reference: "${cleanRef}"`);
 
   try {
     // 1. Find matching pending top-up
@@ -165,23 +199,36 @@ async function handleAutoCredit(
       .eq('status', 'pending');
 
     if (pendingErr) {
-      console.error('Error fetching pending top-up:', pendingErr);
+      console.error('❌ Error fetching pending top-up:', pendingErr);
       return;
     }
 
     if (!pendingData || pendingData.length === 0) {
-      console.log(`No pending top up found matching reference: "${cleanRef}"`);
-      // Log all pending top-ups for debugging
+      console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
+      
+      // Log all pending references for debugging
       const { data: allPending } = await supabase
         .from('pending_topups')
-        .select('reference_code, status')
+        .select('reference_code, status, user_email')
         .eq('status', 'pending');
-      console.log('All pending references:', allPending?.map(p => p.reference_code) || []);
+      
+      console.log('📋 All pending references:', allPending?.map(p => p.reference_code) || []);
+      console.log('📋 All pending data:', allPending);
+      
+      // Also check if there are any with similar reference (case insensitive)
+      if (allPending && allPending.length > 0) {
+        const similar = allPending.filter(p => 
+          p.reference_code && p.reference_code.toUpperCase().includes(cleanRef.substring(0, 6))
+        );
+        if (similar.length > 0) {
+          console.log('🔄 Found similar references:', similar.map(p => p.reference_code));
+        }
+      }
       return;
     }
 
     const matchReq = pendingData[0];
-    console.log('Found matching pending top-up:', matchReq);
+    console.log('✅ Found matching pending top-up:', matchReq);
     
     const userEmail = matchReq.user_email;
     const userName = matchReq.user_name || 'Customer';
@@ -193,12 +240,12 @@ async function handleAutoCredit(
       .eq('email', userEmail.toLowerCase().trim());
 
     if (userErr) {
-      console.error('Error fetching user profile:', userErr);
+      console.error('❌ Error fetching user profile:', userErr);
       return;
     }
 
     if (!userData || userData.length === 0) {
-      console.error(`User profile not found for email: ${userEmail}`);
+      console.error(`❌ User profile not found for email: ${userEmail}`);
       return;
     }
 
@@ -206,7 +253,7 @@ async function handleAutoCredit(
     const currentBalance = Number(profile.wallet_balance || 0);
     const newBalance = Number((currentBalance + amount).toFixed(2));
 
-    console.log(`Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
+    console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance} for user ${userEmail}`);
 
     // 3. Update User Profile balance
     const { error: updateErr } = await supabase
@@ -215,7 +262,7 @@ async function handleAutoCredit(
       .eq('id', profile.id);
 
     if (updateErr) {
-      console.error('Failed to update user profile balance:', updateErr.message);
+      console.error('❌ Failed to update user profile balance:', updateErr.message);
       return;
     }
 
@@ -265,9 +312,9 @@ async function handleAutoCredit(
         created_at: createdAt
       }]);
 
-    console.log(`✅ Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
+    console.log(`✅✅✅ Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
   } catch (err) {
-    console.error('Error in handleAutoCredit:', err);
+    console.error('❌ Error in handleAutoCredit:', err);
   }
 }
 
@@ -319,10 +366,9 @@ export default async function handler(req, res) {
 
     // Otherwise, process incoming SMS Webhook (POST or GET with parameters)
     const sourceData = req.method === 'GET' ? req.query : (req.body || {});
-    console.log('Webhook received data:', sourceData);
+    console.log('📨 Webhook received data:', JSON.stringify(sourceData, null, 2));
 
     const { momoTxnId, amount, network, referenceCode, rawSms, senderPhone } = extractWebhookData(sourceData);
-    console.log('Extracted data:', { momoTxnId, amount, network, referenceCode, senderPhone });
 
     const payload = {
       momoTxnId: momoTxnId || `SMS-${Date.now()}`,
@@ -333,33 +379,6 @@ export default async function handler(req, res) {
       senderPhone: senderPhone || 'SMS Forwarder',
       receivedAt: new Date().toISOString()
     };
-
-    // Log to a webhook_logs table if it exists (optional)
-    if (supabase) {
-      try {
-        // Check if webhook_logs table exists
-        const { data: tableCheck } = await supabase
-          .from('webhook_logs')
-          .select('count')
-          .limit(1)
-          .maybeSingle()
-          .catch(() => ({ data: null }));
-
-        if (tableCheck !== null) {
-          await supabase.from('webhook_logs').insert([{
-            momo_txn_id: payload.momoTxnId,
-            amount: payload.amount,
-            reference_code: payload.referenceCode,
-            raw_payload: JSON.stringify(sourceData),
-            extracted_sms: payload.rawSms,
-            created_at: payload.receivedAt
-          }]);
-        }
-      } catch (logErr) {
-        // Ignore logging errors
-        console.debug('Webhook logging skipped:', logErr.message);
-      }
-    }
 
     if (supabase) {
       try {
@@ -379,9 +398,10 @@ export default async function handler(req, res) {
           }], { onConflict: 'momo_txn_id' });
 
         if (insertError) {
-          console.error('Supabase SMS webhook insert error:', insertError);
+          console.error('❌ Supabase SMS webhook insert error:', insertError);
         } else {
-          console.log('Webhook inserted successfully');
+          console.log('✅ Webhook inserted successfully');
+          
           // Trigger auto credit verification!
           await handleAutoCredit(
             payload.momoTxnId,
@@ -394,7 +414,7 @@ export default async function handler(req, res) {
           );
         }
       } catch (dbErr) {
-        console.error('Supabase operation error:', dbErr);
+        console.error('❌ Supabase operation error:', dbErr);
       }
     }
 
@@ -408,7 +428,7 @@ export default async function handler(req, res) {
 
     return res.status(200).send(`OK - SMS Received: Txn ID ${payload.momoTxnId}, Amount GHS ${payload.amount}, Network ${payload.network}`);
   } catch (err) {
-    console.error('Webhook handler error:', err);
+    console.error('❌ Webhook handler error:', err);
     return res.status(200).send(`OK - SMS Received with notice: ${err.message}`);
   }
 }
