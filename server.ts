@@ -126,23 +126,136 @@ function extractWebhookData(body: any): {
     }
 
     if (!referenceCode) {
-      const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
-      if (refMatch) {
-        const fullRef = refMatch[1].trim();
-        if (fullRef.includes(',')) {
-          const parts = fullRef.split(',').map(p => p.trim());
-          const lastPart = parts[parts.length - 1];
-          const codeMatch = lastPart.match(/([A-Za-z0-9]+)/);
-          if (codeMatch) referenceCode = codeMatch[1];
-        } else {
-          const codeMatch = fullRef.match(/([A-Za-z0-9_-]+)/);
-          if (codeMatch) referenceCode = codeMatch[1];
+      const dmhMatch = smsCleaned.match(/(DMH-\d{6})/i);
+      if (dmhMatch) {
+        referenceCode = dmhMatch[1].toUpperCase();
+      } else {
+        const refMatch = smsCleaned.match(/Reference[:\s]*([^\n\r.]+)/i);
+        if (refMatch) {
+          const fullRef = refMatch[1].trim();
+          if (fullRef.includes(',')) {
+            const parts = fullRef.split(',').map(p => p.trim());
+            const lastPart = parts[parts.length - 1];
+            const codeMatch = lastPart.match(/([A-Za-z0-9]+)/);
+            if (codeMatch) referenceCode = codeMatch[1];
+          } else {
+            const codeMatch = fullRef.match(/([A-Za-z0-9_-]+)/);
+            if (codeMatch) referenceCode = codeMatch[1];
+          }
         }
       }
     }
   }
 
   return { momoTxnId, amount, network, referenceCode, rawSms, senderPhone };
+}
+
+async function handleAutoCredit(
+  momoTxnId: string,
+  amount: number,
+  network: string,
+  referenceCode: string | null,
+  rawSms: string,
+  senderPhone: string,
+  createdAt: string
+) {
+  if (!supabaseServer || !referenceCode) return;
+  const cleanRef = referenceCode.trim().toUpperCase();
+  if (!cleanRef) return;
+
+  try {
+    // 1. Find matching pending top-up
+    const { data: pendingData, error: pendingErr } = await supabaseServer
+      .from('pending_topups')
+      .select('*')
+      .eq('reference_code', cleanRef)
+      .eq('status', 'pending');
+
+    if (pendingErr || !pendingData || pendingData.length === 0) {
+      console.log(`No pending top up matching reference: ${cleanRef}`);
+      return;
+    }
+
+    const matchReq = pendingData[0];
+    const userEmail = matchReq.user_email;
+    const userName = matchReq.user_name || 'Customer';
+
+    // 2. Fetch target user profile
+    const { data: userData, error: userErr } = await supabaseServer
+      .from('profiles')
+      .select('*')
+      .eq('email', userEmail.toLowerCase().trim());
+
+    if (userErr || !userData || userData.length === 0) {
+      console.error(`User profile not found for email: ${userEmail}`);
+      return;
+    }
+
+    const profile = userData[0];
+    const currentBalance = Number(profile.wallet_balance || 0);
+    const newBalance = Number((currentBalance + amount).toFixed(2));
+
+    // 3. Update User Profile balance
+    const { error: updateErr } = await supabaseServer
+      .from('profiles')
+      .update({ wallet_balance: newBalance })
+      .eq('id', profile.id);
+
+    if (updateErr) {
+      console.error('Failed to update user profile balance:', updateErr.message);
+      return;
+    }
+
+    // 4. Update Pending Top-Up status
+    await supabaseServer
+      .from('pending_topups')
+      .update({ status: 'completed' })
+      .eq('id', matchReq.id);
+
+    // 5. Insert Wallet Transaction record
+    await supabaseServer
+      .from('wallet_transactions')
+      .insert([{
+        user_id: profile.id,
+        amount: amount,
+        type: 'topup',
+        description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
+        reference_code: cleanRef,
+        momo_txn_id: momoTxnId,
+        balance_after: newBalance,
+        created_at: createdAt
+      }]);
+
+    // 6. Update Webhook record as claimed
+    const claimedString = `${userName} (${userEmail}) via Auto-Ref ${cleanRef}`;
+    await supabaseServer
+      .from('sms_webhooks')
+      .update({
+        status: 'claimed',
+        claimed_by: claimedString,
+        reference_code: cleanRef
+      })
+      .eq('momo_txn_id', momoTxnId);
+
+    // 7. Insert Payment Claim record as claimed
+    await supabaseServer
+      .from('payment_claims')
+      .insert([{
+        user_id: profile.id,
+        user_email: userEmail,
+        user_name: userName,
+        momo_txn_id: momoTxnId,
+        momo_number: senderPhone || 'SMS Webhook',
+        amount: amount,
+        status: 'claimed',
+        admin_notes: `Auto-verified & claimed instantly via webhook with reference ${cleanRef}`,
+        created_at: createdAt
+      }]);
+
+    console.log(`Successfully auto-credited user ${userEmail} with GHS ${amount} via Ref ${cleanRef}`);
+  } catch (err) {
+    console.error('Error in handleAutoCredit:', err);
+  }
 }
 
 async function startServer() {
@@ -216,7 +329,20 @@ async function startServer() {
           sender_phone: senderPhone || '',
           created_at: newWebhook.date
         }], { onConflict: 'momo_txn_id' }).then(({ error }) => {
-          if (error) console.error('Supabase server webhook insert error:', error.message);
+          if (error) {
+            console.error('Supabase server webhook insert error:', error.message);
+          } else {
+            // Perform auto credit verification!
+            handleAutoCredit(
+              effectiveTxnId,
+              effectiveAmount,
+              effectiveNetwork,
+              referenceCode,
+              rawSms || JSON.stringify(sourceData),
+              senderPhone || '',
+              newWebhook.date
+            );
+          }
         });
       }
 
@@ -243,7 +369,15 @@ async function startServer() {
     const { id } = req.params;
     const index = serverWebhooks.findIndex(w => w.id === id || w.momoTxnId === id);
     if (index !== -1) {
+      const target = serverWebhooks[index];
       serverWebhooks.splice(index, 1);
+
+      if (supabaseServer) {
+        supabaseServer.from('sms_webhooks').delete().eq('momo_txn_id', target.momoTxnId).then(({ error }) => {
+          if (error) console.error('Error deleting webhook from Supabase in server:', error.message);
+        });
+      }
+
       return res.json({ success: true, message: `Webhook ${id} deleted.` });
     }
     return res.status(404).json({ success: false, error: 'Webhook not found.' });

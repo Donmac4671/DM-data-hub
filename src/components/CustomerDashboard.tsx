@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { NetworkId, DataPackage } from '../types';
+import { renderStatusBadge } from '../utils/statusHelper';
 import { GreetingBanner } from './GreetingBanner';
 import { matchDataPackage } from '../utils/search';
 import { validateGhanaNetworkPhone } from '../lib/networkValidator';
@@ -199,17 +200,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
         {/* Network Filter Pills */}
         <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none">
-          <button
-            onClick={() => setSelectedNetwork('all')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              selectedNetwork === 'all'
-                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-black shadow'
-                : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300'
-            }`}
-          >
-            All Networks
-          </button>
-
           {networks.map(net => {
             const isSelected = selectedNetwork === net.id;
             return (
@@ -334,9 +324,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                   <td className="py-3 px-2 font-mono text-zinc-500">{ord.items[0]?.recipientPhone || '-'}</td>
                   <td className="py-3 px-2 font-bold text-zinc-900 dark:text-zinc-100">GHS {ord.totalAmount.toFixed(2)}</td>
                   <td className="py-3 px-2">
-                    <span className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      {ord.status.toUpperCase()}
-                    </span>
+                    {renderStatusBadge(ord.status)}
                   </td>
                   <td className="py-3 px-2 text-right">
                     <button

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { NetworkId, DataPackage, ClaimStatus, OrderStatus, UserProfile } from '../types';
+import { renderStatusBadge } from '../utils/statusHelper';
 import { OrderFilterBar, OrderFiltersState, filterOrders } from './OrderFilterBar';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
@@ -106,7 +107,7 @@ export const AdminDashboard: React.FC = () => {
   // Analytics Calculations
   const userCount = usersList.length;
   const totalWalletBalance = usersList.reduce((sum, u) => sum + u.walletBalance, 0);
-  const totalTopUpsCount = webhookLogs.filter(w => w.status === 'processed').length + claims.filter(c => c.status === 'approved').length;
+  const totalTopUpsCount = webhookLogs.filter(w => w.status === 'processed').length + claims.filter(c => c.status === 'approved' || c.status === 'claimed').length;
   const totalRevenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
   const pendingOrdersCount = orders.filter(o => o.status === 'pending' || o.status === 'processing' || o.status === 'waiting').length;
   const deliveredOrdersCount = orders.filter(o => o.status === 'completed' || o.status === 'delivered').length;
@@ -324,21 +325,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const getOrderStatusBadge = (status: OrderStatus) => {
-    switch (status) {
-      case 'failed':
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-red-500 text-white uppercase">Failed</span>;
-      case 'waiting':
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-slate-400 text-white uppercase">Waiting</span>;
-      case 'pending':
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-amber-500 text-black uppercase">Pending</span>;
-      case 'processing':
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-blue-600 text-white uppercase">Processing</span>;
-      case 'delivered':
-      case 'completed':
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-emerald-600 text-white uppercase">Delivered</span>;
-      default:
-        return <span className="px-2 py-0.5 rounded font-black text-[10px] bg-slate-500 text-white uppercase">{status}</span>;
-    }
+    return renderStatusBadge(status);
   };
 
   return (
@@ -647,7 +634,6 @@ export const AdminDashboard: React.FC = () => {
                           <option value="pending">Pending (Yellow)</option>
                           <option value="processing">Processing (Blue)</option>
                           <option value="delivered">Delivered (Green)</option>
-                          <option value="completed">Completed (Green)</option>
                           <option value="failed">Failed (Red)</option>
                         </select>
                       </td>
@@ -685,10 +671,10 @@ export const AdminDashboard: React.FC = () => {
                 {c.status === 'pending' ? (
                   <div className="flex items-center space-x-2">
                     <button
-                      onClick={() => processClaim(c.id, 'approved', 'Verified by Admin')}
+                      onClick={() => processClaim(c.id, 'claimed', 'Verified by Admin')}
                       className="px-4 py-2 bg-emerald-600 text-white font-black rounded-xl text-xs uppercase tracking-wider"
                     >
-                      Approve & Auto-Credit
+                      Claim & Auto-Credit
                     </button>
                     <button
                       onClick={() => processClaim(c.id, 'rejected', 'Invalid Transaction ID')}
@@ -1244,13 +1230,13 @@ export const AdminDashboard: React.FC = () => {
                         </td>
                         <td className="p-4">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            claim.status === 'approved'
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                            (claim.status === 'approved' || claim.status === 'claimed')
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
                               : claim.status === 'rejected'
                               ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
                               : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
                           }`}>
-                            {claim.status}
+                            {claim.status === 'approved' ? 'claimed' : claim.status}
                           </span>
                         </td>
                         <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
@@ -1260,10 +1246,10 @@ export const AdminDashboard: React.FC = () => {
                           {claim.status === 'pending' && (
                             <>
                               <button
-                                onClick={() => processClaim(claim.id, 'approved', 'Manually verified by admin')}
+                                onClick={() => processClaim(claim.id, 'claimed', 'Manually verified by admin')}
                                 className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
                               >
-                                Approve & Credit
+                                Claim & Credit
                               </button>
                               <button
                                 onClick={() => processClaim(claim.id, 'rejected', 'Invalid transaction details')}

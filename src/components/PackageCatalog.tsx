@@ -90,17 +90,6 @@ export const PackageCatalog: React.FC = () => {
 
       {/* Network Filter Pills */}
       <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
-        <button
-          onClick={() => setSelectedNetwork('all')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-            selectedNetwork === 'all'
-              ? 'bg-amber-500 text-black shadow-md'
-              : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400'
-          }`}
-        >
-          All Networks
-        </button>
-
         {networks.map(net => (
           <button
             key={net.id}

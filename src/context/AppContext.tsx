@@ -21,6 +21,13 @@ import {
   updateComplaintInSupabase,
   deleteComplaintFromSupabase,
   isSupabaseConfigured,
+  fetchPackagesFromSupabase,
+  upsertPackageInSupabase,
+  deletePackageFromSupabase,
+  fetchAnnouncementsFromSupabase,
+  upsertAnnouncementInSupabase,
+  deleteAnnouncementFromSupabase,
+  deleteWebhookFromSupabase,
 } from '../lib/supabase';
 import {
   DataPackage,
@@ -101,7 +108,7 @@ interface AppContextType {
   // Claims
   claims: PaymentClaim[];
   submitPaymentClaim: (claim: { referenceCode?: string; momoTxnId: string; amount: number; momoNumber: string; screenshotUrl?: string }) => void;
-  processClaim: (claimId: string, status: 'approved' | 'rejected', notes?: string) => void;
+  processClaim: (claimId: string, status: ClaimStatus, notes?: string) => void;
   
   // Admin manual wallet actions
   manualAdjustWallet: (userId: string, amount: number, reason: string) => void;
@@ -209,6 +216,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Initial Supabase fetch if configured
   useEffect(() => {
     if (isSupabaseConfigured) {
+      fetchPackagesFromSupabase().then(spPkgs => {
+        if (spPkgs.length > 0) {
+          setPackages(spPkgs);
+          localStorage.setItem('dmh_packages', JSON.stringify(spPkgs));
+        }
+      });
+
+      fetchAnnouncementsFromSupabase().then(spAnns => {
+        setAnnouncements(prev => {
+          const map = new Map<string, Announcement>();
+          prev.forEach(a => map.set(a.id, a));
+          spAnns.forEach(a => map.set(a.id, a));
+          const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          localStorage.setItem('dmh_announcements', JSON.stringify(merged));
+          return merged;
+        });
+      });
+
       fetchUsersFromSupabase().then(spUsers => {
         setUsersList(prev => {
           const map = new Map<string, UserProfile>();
@@ -278,11 +303,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const matched = usersList.find(
         u => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase()
       );
+
+      if (matched && matched.isBlocked) {
+        // Instantly force logout on blocked account!
+        setCurrentUser(MOCK_ADMIN_USER);
+        setActiveRole('customer');
+        setIsAuthenticated(false);
+        localStorage.removeItem('dmh_auth');
+        localStorage.setItem('dmh_role', 'customer');
+        showToast('Account Suspended', 'This account has been blocked or suspended by the administrator.', 'error');
+        return;
+      }
+
       if (
         matched &&
         (matched.walletBalance !== currentUser.walletBalance ||
           matched.ordersCount !== currentUser.ordersCount ||
           matched.totalSpent !== currentUser.totalSpent ||
+          matched.isBlocked !== currentUser.isBlocked ||
           matched.role !== currentUser.role)
       ) {
         const synced = { ...currentUser, ...matched };
@@ -332,6 +370,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         try {
           const storedWebhooks = JSON.parse(storedWebhooksStr);
           setWebhookLogs(prev => (JSON.stringify(prev) === storedWebhooksStr ? prev : storedWebhooks));
+        } catch (e) {}
+      }
+
+      const storedNetworksStr = localStorage.getItem('dmh_networks');
+      if (storedNetworksStr) {
+        try {
+          const storedNetworks = JSON.parse(storedNetworksStr);
+          setNetworks(prev => (JSON.stringify(prev) === storedNetworksStr ? prev : storedNetworks));
+        } catch (e) {}
+      }
+
+      const storedPackagesStr = localStorage.getItem('dmh_packages');
+      if (storedPackagesStr) {
+        try {
+          const storedPackages = JSON.parse(storedPackagesStr);
+          setPackages(prev => (JSON.stringify(prev) === storedPackagesStr ? prev : storedPackages));
+        } catch (e) {}
+      }
+
+      const storedAnnsStr = localStorage.getItem('dmh_announcements');
+      if (storedAnnsStr) {
+        try {
+          const storedAnns = JSON.parse(storedAnnsStr);
+          setAnnouncements(prev => (JSON.stringify(prev) === storedAnnsStr ? prev : storedAnns));
         } catch (e) {}
       }
     };
@@ -532,18 +594,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: `pkg-${Date.now()}`,
     };
     setPackages(prev => [...prev, newPkg]);
+    if (isSupabaseConfigured) {
+      upsertPackageInSupabase(newPkg);
+    }
     addAuditLog('ADD_PACKAGE', `Added new package: ${newPkg.name} - GHS ${newPkg.price}`);
     showToast('Package Created', `${newPkg.name} added successfully.`, 'success');
   };
 
   const updatePackage = (id: string, updates: Partial<DataPackage>) => {
-    setPackages(prev => prev.map(p => (p.id === id ? { ...p, ...updates } : p)));
+    setPackages(prev => {
+      const updated = prev.map(p => {
+        if (p.id === id) {
+          const fullPkg = { ...p, ...updates };
+          if (isSupabaseConfigured) {
+            upsertPackageInSupabase(fullPkg);
+          }
+          return fullPkg;
+        }
+        return p;
+      });
+      return updated;
+    });
     addAuditLog('UPDATE_PACKAGE', `Updated package ID: ${id}`);
     showToast('Package Updated', 'Changes saved successfully.', 'success');
   };
 
   const deletePackage = (id: string) => {
     setPackages(prev => prev.filter(p => p.id !== id));
+    if (isSupabaseConfigured) {
+      deletePackageFromSupabase(id);
+    }
     addAuditLog('DELETE_PACKAGE', `Deleted package ID: ${id}`);
     showToast('Package Deleted', 'Package removed from catalog.', 'info');
   };
@@ -606,6 +686,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     paymentMethod: 'wallet' | 'direct_momo' = 'wallet',
     momoTxnId?: string
   ): { success: boolean; message: string; order?: Order } => {
+    if (currentUser.isBlocked) {
+      return { success: false, message: 'This account has been suspended or blocked by admin. Please contact support.' };
+    }
     if (cart.length === 0) {
       return { success: false, message: 'Your cart is empty!' };
     }
@@ -693,15 +776,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Trigger Notification
     addNotification({
       userId: currentUser.id,
-      title: '📦 Order Received & Pending Processing',
-      message: `Your order #${orderNum} for GHS ${total.toFixed(2)} has been placed. Data delivery takes 3 to 30 minutes. An admin will process your request.`,
+      title: '📦 ORDER RECEIVED AND IS BEEN PROCESSED',
+      message: `ORDER RECEIVED AND IS BEEN PROCESSED. Your order #${orderNum} for GHS ${total.toFixed(2)} has been placed. Data delivery takes 3 to 30 minutes.`,
       type: 'order',
     });
 
     addAuditLog('PLACE_ORDER', `Order ${orderNum} placed. Total GHS ${total}. Method: wallet. Status: pending`);
-    showToast('Order Placed!', `Order #${orderNum} submitted successfully. Data delivery takes 3-30 minutes.`, 'info');
+    showToast('Order Placed!', `ORDER RECEIVED AND IS BEEN PROCESSED. Order #${orderNum} submitted successfully. Data delivery takes 3-30 minutes.`, 'info');
 
-    return { success: true, message: 'Order placed successfully! Data delivery takes 3-30 minutes and is pending admin processing.', order: newOrder };
+    return { success: true, message: 'ORDER RECEIVED AND IS BEEN PROCESSED. Your order has been placed. Data delivery takes 3 to 30 minutes.', order: newOrder };
   };
 
   const updateOrderStatus = (orderId: string, status: OrderStatus, failureReason?: string) => {
@@ -789,7 +872,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [webhookLogs]);
 
   const deleteSmsWebhook = (webhookId: string) => {
+    const found = webhookLogs.find(w => w.id === webhookId);
     setWebhookLogs(prev => prev.filter(w => w.id !== webhookId));
+
+    // Call server DELETE endpoint
+    fetch(`/api/webhook/sms/${webhookId}`, { method: 'DELETE' })
+      .catch(err => console.error('Error calling webhook delete endpoint:', err));
+
+    if (found && isSupabaseConfigured) {
+      deleteWebhookFromSupabase(found.momoTxnId);
+    }
+
     addAuditLog('DELETE_SMS_WEBHOOK', `Deleted webhook entry ${webhookId}`);
     showToast('Webhook Deleted', 'Webhook record removed from system.', 'info');
   };
@@ -955,83 +1048,131 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const cleanTxn = claimData.momoTxnId.trim().toUpperCase();
     const cleanRef = claimData.referenceCode?.trim().toUpperCase();
 
-    const matchedLog = webhookLogs.find(w => w.momoTxnId.toUpperCase() === cleanTxn);
-    const matchedPending = pendingTopUpRequests.find(r => cleanRef && r.referenceCode.toUpperCase() === cleanRef && r.status === 'pending');
+    // Secure Matching: transaction ID AND amount must match an unclaimed webhook log exactly
+    const matchedLog = webhookLogs.find(
+      w => w.momoTxnId.toUpperCase() === cleanTxn &&
+           Number(w.amount) === Number(claimData.amount) &&
+           w.status === 'unclaimed'
+    );
 
+    const matchedPending = pendingTopUpRequests.find(
+      r => cleanRef && r.referenceCode.toUpperCase() === cleanRef && r.status === 'pending'
+    );
+
+    const isAutoCredible = !!matchedLog || !!matchedPending;
     let finalAmount = claimData.amount;
-    if (matchedLog && matchedLog.amount > 0) {
+
+    if (matchedLog) {
       finalAmount = matchedLog.amount;
-    } else if (matchedPending && matchedPending.amount > 0) {
+    } else if (matchedPending) {
       finalAmount = matchedPending.amount;
     }
 
-    if (finalAmount <= 0) {
-      finalAmount = 50.00; // Default sample credit for instant verification demo
+    if (isAutoCredible) {
+      // Auto-approve and credit wallet instantly
+      const newBal = Number((currentUser.walletBalance + finalAmount).toFixed(2));
+      const updatedUser = { ...currentUser, walletBalance: newBal };
+      setCurrentUser(updatedUser);
+      setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+
+      if (isSupabaseConfigured) {
+        updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
+      }
+
+      if (matchedLog) {
+        const claimedStr = `${currentUser.fullName} (${currentUser.email})`;
+        setWebhookLogs(prev =>
+          prev.map(w => w.id === matchedLog.id ? { ...w, status: 'claimed', claimedBy: claimedStr } : w)
+        );
+        if (isSupabaseConfigured) {
+          updateWebhookStatusInSupabase(matchedLog.momoTxnId, 'claimed', claimedStr);
+        }
+      }
+
+      if (matchedPending) {
+        setPendingTopUpRequests(prev =>
+          prev.map(r => (r.id === matchedPending.id ? { ...r, status: 'completed' } : r))
+        );
+      }
+
+      const tx: WalletTransaction = {
+        id: `tx-${Date.now()}`,
+        userId: currentUser.id,
+        amount: finalAmount,
+        type: 'topup',
+        description: `Instant Verified MoMo Claim (Txn: ${claimData.momoTxnId})`,
+        referenceCode: claimData.referenceCode,
+        momoTxnId: claimData.momoTxnId,
+        balanceAfter: newBal,
+        createdAt: new Date().toISOString(),
+      };
+      setWalletTransactions(prev => [tx, ...prev]);
+
+      const newClaim: PaymentClaim = {
+        id: `claim-${Date.now()}`,
+        userId: currentUser.id,
+        userEmail: currentUser.email,
+        userName: currentUser.fullName,
+        ...claimData,
+        amount: finalAmount,
+        status: 'claimed',
+        createdAt: new Date().toISOString(),
+        processedAt: new Date().toISOString(),
+        adminNotes: 'Auto-verified & credited instantly via MoMo matcher',
+      };
+
+      setClaims(prev => [newClaim, ...prev]);
+      if (isSupabaseConfigured) {
+        createClaimInSupabase(newClaim);
+      }
+
+      addNotification({
+        userId: currentUser.id,
+        title: '✅ MoMo Payment Verified & Credited!',
+        message: `Your payment of GHS ${finalAmount.toFixed(2)} (Txn ID: ${claimData.momoTxnId}) was matched and credited to your wallet instantly!`,
+        type: 'wallet',
+      });
+
+      addAuditLog('AUTO_CLAIM_APPROVED', `Instant claim verified for GHS ${finalAmount}. MoMo Txn: ${claimData.momoTxnId}`);
+      showToast('Payment Verified!', `GHS ${finalAmount.toFixed(2)} credited to your wallet instantly!`, 'success');
+    } else {
+      // Secure Fallback: NOT auto-approved. Saved as pending for Admin verification.
+      const newClaim: PaymentClaim = {
+        id: `claim-${Date.now()}`,
+        userId: currentUser.id,
+        userEmail: currentUser.email,
+        userName: currentUser.fullName,
+        ...claimData,
+        amount: finalAmount,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+
+      setClaims(prev => [newClaim, ...prev]);
+      if (isSupabaseConfigured) {
+        createClaimInSupabase(newClaim);
+      }
+
+      addNotification({
+        userId: currentUser.id,
+        title: '⏳ Payment Claim Submitted for Review',
+        message: `Your payment claim for GHS ${finalAmount.toFixed(2)} (Txn ID: ${claimData.momoTxnId}) has been submitted. Admin will review and credit your wallet shortly.`,
+        type: 'wallet',
+      });
+
+      addAuditLog('CLAIM_SUBMITTED_PENDING', `User ${currentUser.email} submitted pending claim for Txn ${cleanTxn} (GHS ${finalAmount})`);
+      showToast('Claim Submitted!', 'Details sent to Admin for review & manual crediting.', 'info');
     }
-
-    // Auto-approve and credit wallet instantly
-    const newBal = currentUser.walletBalance + finalAmount;
-    const updatedUser = { ...currentUser, walletBalance: newBal };
-    setCurrentUser(updatedUser);
-    setUsersList(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-
-    if (isSupabaseConfigured) {
-      updateProfileInSupabase(currentUser.id, { walletBalance: newBal });
-    }
-
-    if (matchedPending) {
-      setPendingTopUpRequests(prev =>
-        prev.map(r => (r.id === matchedPending.id ? { ...r, status: 'completed' } : r))
-      );
-    }
-
-    const tx: WalletTransaction = {
-      id: `tx-${Date.now()}`,
-      userId: currentUser.id,
-      amount: finalAmount,
-      type: 'topup',
-      description: `Instant Verified MoMo Claim (Txn: ${claimData.momoTxnId})`,
-      referenceCode: claimData.referenceCode,
-      momoTxnId: claimData.momoTxnId,
-      balanceAfter: newBal,
-      createdAt: new Date().toISOString(),
-    };
-    setWalletTransactions(prev => [tx, ...prev]);
-
-    const newClaim: PaymentClaim = {
-      id: `claim-${Date.now()}`,
-      userId: currentUser.id,
-      userEmail: currentUser.email,
-      userName: currentUser.fullName,
-      ...claimData,
-      amount: finalAmount,
-      status: 'approved',
-      createdAt: new Date().toISOString(),
-      processedAt: new Date().toISOString(),
-      adminNotes: 'Auto-verified & credited instantly via MoMo matcher',
-    };
-
-    setClaims(prev => [newClaim, ...prev]);
-    if (isSupabaseConfigured) {
-      createClaimInSupabase(newClaim);
-    }
-
-    addNotification({
-      userId: currentUser.id,
-      title: '✅ MoMo Payment Verified & Credited!',
-      message: `Your payment of GHS ${finalAmount.toFixed(2)} (Txn ID: ${claimData.momoTxnId}) was matched and credited to your wallet instantly!`,
-      type: 'wallet',
-    });
-
-    addAuditLog('AUTO_CLAIM_APPROVED', `Instant claim verified for GHS ${finalAmount}. MoMo Txn: ${claimData.momoTxnId}`);
-    showToast('Payment Verified!', `GHS ${finalAmount.toFixed(2)} credited to your wallet instantly!`, 'success');
   };
 
   const processClaim = (claimId: string, status: ClaimStatus, notes?: string) => {
     const claim = claims.find(c => c.id === claimId);
     if (!claim) return;
 
-    if (status === 'approved' && claim.status !== 'approved') {
+    const isClaiming = status === 'claimed' || status === 'approved';
+    const wasAlreadyClaimed = claim.status === 'claimed' || claim.status === 'approved';
+
+    if (isClaiming && !wasAlreadyClaimed) {
       const creditAmt = claim.amount;
       const targetUser = usersList.find(u => u.id === claim.userId) || currentUser;
       const newBal = targetUser.walletBalance + creditAmt;
@@ -1047,7 +1188,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         userId: claim.userId,
         amount: creditAmt,
         type: 'topup',
-        description: `Approved Payment Claim (MoMo Txn: ${claim.momoTxnId})`,
+        description: `Verified Payment Claim (MoMo Txn: ${claim.momoTxnId})`,
         momoTxnId: claim.momoTxnId,
         balanceAfter: newBal,
         createdAt: new Date().toISOString(),
@@ -1056,8 +1197,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       addNotification({
         userId: claim.userId,
-        title: '✅ Payment Claim Approved!',
-        message: `Your payment claim for GHS ${claim.amount.toFixed(2)} (Txn: ${claim.momoTxnId}) was approved and credited to your wallet.`,
+        title: '✅ Payment Claim Verified!',
+        message: `Your payment claim for GHS ${claim.amount.toFixed(2)} (Txn: ${claim.momoTxnId}) was successfully verified and claimed to your wallet.`,
         type: 'wallet',
       });
     }
@@ -1071,7 +1212,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     addAuditLog('PROCESS_CLAIM', `Claim ${claimId} marked as ${status}. Notes: ${notes || 'N/A'}`);
-    showToast(`Claim ${status.toUpperCase()}`, `Payment claim ${status} successfully.`, status === 'approved' ? 'success' : 'error');
+    showToast(`Claim ${status.toUpperCase()}`, `Payment claim ${status} successfully.`, isClaiming ? 'success' : 'error');
   };
 
   // Users List & Management
@@ -1273,6 +1414,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     momoTxnId?: string,
     screenshotUrl?: string
   ) => {
+    if (currentUser.isBlocked) {
+      showToast('Account Blocked', 'This account has been suspended or blocked by admin.', 'error');
+      return;
+    }
     const newComp: Complaint = {
       id: `comp-${Date.now()}`,
       userId: currentUser.id,
@@ -1303,9 +1448,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     if (isSupabaseConfigured) {
-      createComplaintInSupabase(newComp);
+      // Add a message property dynamically for Supabase API which maps message
+      createComplaintInSupabase({ ...newComp, message });
     }
 
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     showToast('Complaint Submitted', 'Our support team will respond shortly.', 'success');
   };
 
@@ -1340,6 +1487,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updateComplaintInSupabase(updatedComplaint);
     }
 
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     showToast('Reply Sent', 'Your message has been posted.', 'info');
   };
 
@@ -1362,6 +1510,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       updateComplaintInSupabase(updatedComplaint);
     }
 
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
   };
 
@@ -1376,6 +1525,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       deleteComplaintFromSupabase(complaintId);
     }
 
+    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     showToast('Complaint Deleted', 'Support ticket removed.', 'info');
   };
 
@@ -1395,16 +1545,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       createdAt: new Date().toISOString(),
     };
     setAnnouncements(prev => [newAnn, ...prev]);
+    if (isSupabaseConfigured) {
+      upsertAnnouncementInSupabase(newAnn);
+    }
     addAuditLog('ADD_ANNOUNCEMENT', `Posted broadcast: ${ann.title}`);
     showToast('Broadcast Posted', 'All users will see this update.', 'success');
   };
 
   const toggleAnnouncement = (id: string, active: boolean) => {
-    setAnnouncements(prev => prev.map(a => (a.id === id ? { ...a, active } : a)));
+    setAnnouncements(prev => {
+      const updated = prev.map(a => {
+        if (a.id === id) {
+          const fullAnn = { ...a, active };
+          if (isSupabaseConfigured) {
+            upsertAnnouncementInSupabase(fullAnn);
+          }
+          return fullAnn;
+        }
+        return a;
+      });
+      return updated;
+    });
   };
 
   const deleteAnnouncement = (id: string) => {
     setAnnouncements(prev => prev.filter(a => a.id !== id));
+    if (isSupabaseConfigured) {
+      deleteAnnouncementFromSupabase(id);
+    }
   };
 
   // Notifications

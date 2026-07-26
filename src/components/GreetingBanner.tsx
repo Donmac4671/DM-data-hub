@@ -48,7 +48,7 @@ export const GreetingBanner: React.FC = () => {
             {greeting}, <span className="text-amber-600 dark:text-amber-400">{currentUser.fullName}</span>
           </h2>
           <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-            Welcome to Donmac Data Hub • High-Speed Auto Dispatches
+            Welcome to Donmac Data Hub
           </p>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { UserProfile } from '../types';
+import { UserProfile, DataPackage, Announcement } from '../types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -438,7 +438,7 @@ export async function createComplaintInSupabase(c: any): Promise<void> {
       user_email: c.userEmail,
       user_name: c.userName,
       subject: c.subject,
-      message: c.message,
+      message: c.message || (c.messages && c.messages[0]?.message) || '',
       order_number: c.orderNumber || '',
       momo_txn_id: c.momoTxnId || '',
       status: c.status || 'open',
@@ -478,4 +478,119 @@ export async function deleteComplaintFromSupabase(complaintId: string): Promise<
   }
 }
 
+export async function fetchPackagesFromSupabase(): Promise<DataPackage[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('data_packages').select('*').order('sort_order', { ascending: true });
+    if (error) {
+      console.warn('Error fetching packages from Supabase:', error.message);
+      return [];
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      network: row.network,
+      name: row.name,
+      dataAmount: row.data_amount,
+      validity: row.validity,
+      price: Number(row.price),
+      status: row.status,
+      sortOrder: row.sort_order,
+      popular: row.popular,
+    }));
+  } catch (err) {
+    console.error('Error in fetchPackagesFromSupabase:', err);
+    return [];
+  }
+}
+
+export async function upsertPackageInSupabase(pkg: DataPackage): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      id: pkg.id,
+      network: pkg.network,
+      name: pkg.name,
+      data_amount: pkg.dataAmount,
+      validity: pkg.validity,
+      price: pkg.price,
+      status: pkg.status,
+      sort_order: pkg.sortOrder,
+      popular: pkg.popular || false,
+    };
+    const { error } = await supabase.from('data_packages').upsert([row]);
+    if (error) console.error('Error upserting package in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in upsertPackageInSupabase:', err);
+  }
+}
+
+export async function deletePackageFromSupabase(packageId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('data_packages').delete().eq('id', packageId);
+    if (error) console.error('Error deleting package from Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in deletePackageFromSupabase:', err);
+  }
+}
+
+export async function fetchAnnouncementsFromSupabase(): Promise<Announcement[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('announcements').select('*').order('created_at', { ascending: false });
+    if (error) {
+      console.warn('Error fetching announcements from Supabase:', error.message);
+      return [];
+    }
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      type: row.type || 'info',
+      active: row.active,
+      createdAt: row.created_at,
+    }));
+  } catch (err) {
+    console.error('Error in fetchAnnouncementsFromSupabase:', err);
+    return [];
+  }
+}
+
+export async function upsertAnnouncementInSupabase(ann: Announcement): Promise<void> {
+  if (!supabase) return;
+  try {
+    const row = {
+      id: ann.id,
+      title: ann.title,
+      content: ann.content,
+      type: ann.type,
+      active: ann.active,
+      created_at: ann.createdAt,
+    };
+    const { error } = await supabase.from('announcements').upsert([row]);
+    if (error) console.error('Error upserting announcement in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in upsertAnnouncementInSupabase:', err);
+  }
+}
+
+export async function deleteAnnouncementFromSupabase(id: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('announcements').delete().eq('id', id);
+    if (error) console.error('Error deleting announcement from Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in deleteAnnouncementFromSupabase:', err);
+  }
+}
+
+export async function deleteWebhookFromSupabase(momoTxnId: string): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('sms_webhooks').delete().eq('momo_txn_id', momoTxnId);
+    if (error) console.error('Error deleting webhook in Supabase:', error.message);
+  } catch (err) {
+    console.error('Error in deleteWebhookFromSupabase:', err);
+  }
+}
 

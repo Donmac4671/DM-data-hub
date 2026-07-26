@@ -36,7 +36,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onOpenTopUp, onOpenClaim
             GHS {currentUser.walletBalance.toFixed(2)}
           </h2>
           <p className="text-xs text-zinc-400 mt-1">
-            Instant automated wallet funding via MoMo SMS Webhook.
+            Instant automated wallet funding.
           </p>
         </div>
 
@@ -157,14 +157,14 @@ export const WalletView: React.FC<WalletViewProps> = ({ onOpenTopUp, onOpenClaim
                     </span>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        c.status === 'approved'
-                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                        (c.status === 'approved' || c.status === 'claimed')
+                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
                           : c.status === 'rejected'
                           ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
                           : 'bg-amber-500/10 text-amber-500 border-amber-500/20'
                       }`}
                     >
-                      {c.status.toUpperCase()}
+                      {(c.status === 'approved' || c.status === 'claimed') ? 'CLAIMED' : c.status.toUpperCase()}
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-400 mt-1">
