@@ -1,4 +1,4 @@
-// Vercel Serverless Function Handler for SMS Webhooks
+// api/webhook/sms.js
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get the SMS text from query (GET) or body (POST)
+    // Get SMS text
     let smsText = '';
     if (req.method === 'GET') {
       smsText = req.query.text || req.query.message || req.query.sms || '';
@@ -27,14 +27,14 @@ export default async function handler(req, res) {
 
     console.log('📝 SMS Text:', smsText);
 
-    // Extract values from SMS
+    // Extract data
     let momoTxnId = '';
     let amount = 0;
     let network = 'MTN';
     let referenceCode = '';
 
     if (smsText) {
-      // Extract Transaction ID (11 digits)
+      // Extract Transaction ID
       const txnMatch = smsText.match(/\b(\d{11})\b/);
       if (txnMatch) momoTxnId = txnMatch[1];
 
@@ -65,79 +65,95 @@ export default async function handler(req, res) {
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
 
-    // Save to Supabase
+    // Save to Supabase (always)
     if (supabase && momoTxnId) {
-      try {
-        // Insert webhook record
-        await supabase
-          .from('sms_webhooks')
-          .upsert([{
-            momo_txn_id: momoTxnId || `SMS-${Date.now()}`,
-            amount: amount || 0,
-            network: network || 'MTN',
-            status: 'unclaimed',
-            claimed_by: '-',
-            reference_code: referenceCode || '',
-            raw_sms: smsText || '',
-            sender_phone: 'SMS Forwarder',
-            created_at: new Date().toISOString()
-          }], { onConflict: 'momo_txn_id' });
+      await supabase
+        .from('sms_webhooks')
+        .upsert([{
+          momo_txn_id: momoTxnId || `SMS-${Date.now()}`,
+          amount: amount || 0,
+          network: network || 'MTN',
+          status: 'unclaimed',
+          claimed_by: '-',
+          reference_code: referenceCode || '',
+          raw_sms: smsText || '',
+          sender_phone: 'SMS Forwarder',
+          created_at: new Date().toISOString()
+        }], { onConflict: 'momo_txn_id' });
+    }
 
-        // Try to auto-credit if reference code found
-        if (referenceCode) {
-          const cleanRef = referenceCode.trim().toUpperCase();
-          console.log('🔍 Looking for reference:', cleanRef);
+    // FORWARD TO EXPRESS SERVER FOR AUTO-CLAIM
+    // Your Express server is running on the same domain
+    try {
+      const forwardUrl = `https://dm-data-hub.vercel.app/api/webhook/sms/claim`;
+      
+      const response = await fetch(forwardUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          momoTxnId,
+          amount,
+          network,
+          referenceCode,
+          smsText,
+          timestamp: new Date().toISOString()
+        })
+      });
 
-          const { data: pending, error: pendingErr } = await supabase
-            .from('pending_topups')
+      console.log('📤 Forwarded to claim endpoint:', response.status);
+    } catch (forwardErr) {
+      console.log('⚠️ Could not forward to claim endpoint, using direct Supabase check...');
+      
+      // FALLBACK: Try direct auto-claim in serverless function
+      if (referenceCode && supabase) {
+        const cleanRef = referenceCode.trim().toUpperCase();
+        console.log('🔍 Direct claim attempt for:', cleanRef);
+
+        const { data: pending } = await supabase
+          .from('pending_topups')
+          .select('*')
+          .eq('reference_code', cleanRef)
+          .eq('status', 'pending');
+
+        if (pending && pending.length > 0) {
+          const match = pending[0];
+          console.log('✅ Found pending top-up:', match.reference_code);
+
+          const { data: userData } = await supabase
+            .from('profiles')
             .select('*')
-            .eq('reference_code', cleanRef)
-            .eq('status', 'pending');
+            .eq('email', match.user_email.toLowerCase().trim());
 
-          if (!pendingErr && pending && pending.length > 0) {
-            const match = pending[0];
-            console.log('✅ Found pending top-up:', match.reference_code);
+          if (userData && userData.length > 0) {
+            const profile = userData[0];
+            const newBalance = Number((Number(profile.wallet_balance || 0) + (amount || 0)).toFixed(2));
 
-            // Get user profile
-            const { data: userData } = await supabase
+            await supabase
               .from('profiles')
-              .select('*')
-              .eq('email', match.user_email.toLowerCase().trim());
+              .update({ wallet_balance: newBalance })
+              .eq('id', profile.id);
 
-            if (userData && userData.length > 0) {
-              const profile = userData[0];
-              const newBalance = Number((Number(profile.wallet_balance || 0) + (amount || 0)).toFixed(2));
+            await supabase
+              .from('pending_topups')
+              .update({ status: 'completed' })
+              .eq('id', match.id);
 
-              // Update wallet
-              await supabase
-                .from('profiles')
-                .update({ wallet_balance: newBalance })
-                .eq('id', profile.id);
+            await supabase
+              .from('sms_webhooks')
+              .update({
+                status: 'claimed',
+                claimed_by: `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`,
+                reference_code: cleanRef
+              })
+              .eq('momo_txn_id', momoTxnId);
 
-              // Update pending top-up
-              await supabase
-                .from('pending_topups')
-                .update({ status: 'completed', completed_at: new Date().toISOString() })
-                .eq('id', match.id);
-
-              // Update webhook
-              await supabase
-                .from('sms_webhooks')
-                .update({
-                  status: 'claimed',
-                  claimed_by: `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`,
-                  reference_code: cleanRef
-                })
-                .eq('momo_txn_id', momoTxnId);
-
-              console.log('✅✅✅ Auto-credited!', match.user_email, 'GHS', amount);
-            }
-          } else {
-            console.log('❌ No pending top-up found for:', cleanRef);
+            console.log('✅✅✅ Auto-credited directly!', match.user_email, 'GHS', amount);
           }
+        } else {
+          console.log('❌ No pending top-up found for direct claim:', cleanRef);
         }
-      } catch (dbErr) {
-        console.error('DB Error:', dbErr);
       }
     }
 
