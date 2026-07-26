@@ -157,6 +157,8 @@ function extractWebhookData(body) {
   return result;
 }
 
+// In api/webhook/sms.js - update the handleAutoCredit function
+
 async function handleAutoCredit(
   momoTxnId,
   amount,
@@ -180,19 +182,22 @@ async function handleAutoCredit(
   const cleanRef = referenceCode.trim().toUpperCase();
   console.log(`🔍 ===== STARTING AUTO-CREDIT CHECK =====`);
   console.log(`🔍 Reference: "${cleanRef}"`);
-  console.log(`🔍 Sender: "${senderName}" (${senderPhone})`);
 
   try {
     // PRIMARY STRATEGY: Find by reference code in pending_topups
-    console.log(`🔍 Strategy 1: Finding pending top-up by reference code`);
-    let { data: pendingData, error: pendingErr } = await supabase
+    console.log(`🔍 Finding pending top-up by reference code`);
+    
+    // Check for pending top-up that is NOT expired
+    const { data: pendingData, error: pendingErr } = await supabase
       .from('pending_topups')
       .select('*')
       .eq('reference_code', cleanRef)
-      .eq('status', 'pending');
+      .eq('status', 'pending')
+      .gte('expires_at', new Date().toISOString()); // Only get non-expired ones
 
     if (pendingErr) {
       console.error('❌ Error fetching pending top-up:', pendingErr);
+      return;
     }
 
     // If found by reference, use that user
@@ -202,74 +207,35 @@ async function handleAutoCredit(
       return;
     }
 
-    // FALLBACK STRATEGY 1: Try to find user by phone number
-    console.log(`🔍 Strategy 2: No pending top-up found. Looking for user by phone number: "${senderPhone}"`);
-    
-    let userProfile = null;
-    
-    if (senderPhone && senderPhone.trim().length > 0) {
-      const cleanPhone = senderPhone.replace(/\s/g, '').replace(/^0/, '233');
-      const { data: phoneMatch, error: phoneErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .or(`phone_number.ilike.%${cleanPhone}%,momo_number.ilike.%${cleanPhone}%`);
+    // Check if the reference exists but is expired
+    const { data: expiredData, error: expiredErr } = await supabase
+      .from('pending_topups')
+      .select('*')
+      .eq('reference_code', cleanRef)
+      .eq('status', 'pending')
+      .lt('expires_at', new Date().toISOString());
 
-      if (!phoneErr && phoneMatch && phoneMatch.length > 0) {
-        userProfile = phoneMatch[0];
-        console.log(`✅ Found user by phone number: ${userProfile.full_name} (${userProfile.email})`);
-      }
-    }
-
-    // FALLBACK STRATEGY 2: Try to find user by sender name
-    if (!userProfile && senderName && senderName.trim().length > 0) {
-      console.log(`🔍 Strategy 3: Looking for user by sender name: "${senderName}"`);
-      const { data: nameMatch, error: nameErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .ilike('full_name', `%${senderName.trim()}%`);
-
-      if (!nameErr && nameMatch && nameMatch.length > 0) {
-        userProfile = nameMatch[0];
-        console.log(`✅ Found user by sender name: ${userProfile.full_name} (${userProfile.email})`);
-      }
-    }
-
-    // If found by sender info, create a pending top-up and credit
-    if (userProfile) {
-      console.log(`💰 Found user: ${userProfile.full_name} (${userProfile.email})`);
-      console.log(`🔄 Creating pending top-up for this user...`);
+    if (expiredData && expiredData.length > 0) {
+      console.log(`⚠️ Found pending top-up but it has EXPIRED! Ref: ${cleanRef}`);
+      console.log(`⚠️ Expired at: ${new Date(expiredData[0].expires_at).toLocaleString()}`);
       
-      // Create a pending top-up record for this user
-      const { data: newPending, error: createErr } = await supabase
-        .from('pending_topups')
-        .insert([{
-          reference_code: cleanRef,
-          amount: amount,
-          user_email: userProfile.email,
-          user_name: userProfile.full_name,
-          status: 'pending',
-          created_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (createErr) {
-        console.error('❌ Failed to create pending top-up:', createErr);
-        return;
-      }
-
-      console.log(`✅ Created pending top-up for user: ${userProfile.email}`);
+      // Update webhook status to indicate expired
+      await supabase
+        .from('sms_webhooks')
+        .update({
+          status: 'unclaimed',
+          claimed_by: 'EXPIRED - reference code expired',
+          reference_code: cleanRef
+        })
+        .eq('momo_txn_id', momoTxnId);
       
-      // Now process the credit
-      await processAutoCredit(newPending, momoTxnId, amount, network, referenceCode, rawSms, senderPhone, createdAt);
       return;
     }
 
-    // No match found at all
-    console.log(`❌ No user found to credit. Reference: ${cleanRef}, Sender: ${senderName || senderPhone}`);
-    console.log(`⚠️ Webhook saved as 'unclaimed' - manual review required`);
+    // No match found
+    console.log(`❌ No pending top up found matching reference: "${cleanRef}"`);
     
-    // Update webhook status to indicate manual review needed
+    // Update webhook status
     await supabase
       .from('sms_webhooks')
       .update({
