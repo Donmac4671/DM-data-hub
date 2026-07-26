@@ -27,52 +27,71 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // FIX: Get user from context or localStorage
-  const getUser = (): any => {
-    // If context has user, use it
-    if (contextUser) {
-      console.log('✅ User found in context');
-      return contextUser;
-    }
-
-    // If authenticated but no user in context, fix the state
-    if (isAuthenticated) {
-      console.log('⚠️ Authenticated but no user in context, checking localStorage...');
-      try {
-        const saved = localStorage.getItem('dmh_user');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          console.log('✅ Found user in localStorage, restoring to context...');
-          // Restore to context
-          setCurrentUser(parsed);
-          return parsed;
-        }
-      } catch (e) {
-        console.error('Error reading user from localStorage:', e);
-      }
-      
-      // If still no user, fix the inconsistency
-      console.warn('⚠️ Auth state inconsistent - logging out');
-      setIsAuthenticated(false);
-      localStorage.removeItem('dmh_auth');
-      return null;
-    }
-
-    console.log('❌ No user found');
-    return null;
-  };
-
-  const user = getUser();
-
-  // Debug logging
+  // FIX: Use useEffect to restore user from localStorage
   useEffect(() => {
-    console.log('🔍 TopUpModal - Context user:', contextUser);
-    console.log('🔍 TopUpModal - Is authenticated:', isAuthenticated);
-    console.log('🔍 TopUpModal - Resolved user:', user);
-  }, [contextUser, isAuthenticated, user]);
+    const restoreUser = () => {
+      console.log('🔍 TopUpModal - Context user:', contextUser);
+      console.log('🔍 TopUpModal - Is authenticated:', isAuthenticated);
+
+      // If context has user, use it
+      if (contextUser) {
+        console.log('✅ User found in context');
+        setUser(contextUser);
+        setIsLoading(false);
+        return;
+      }
+
+      // If authenticated but no user in context, try localStorage
+      if (isAuthenticated) {
+        console.log('⚠️ Authenticated but no user in context, checking localStorage...');
+        try {
+          const saved = localStorage.getItem('dmh_user');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            console.log('✅ Found user in localStorage, restoring to context...');
+            // Restore to context
+            setCurrentUser(parsed);
+            setUser(parsed);
+            setIsLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.error('Error reading user from localStorage:', e);
+        }
+        
+        // If still no user, fix the inconsistency
+        console.warn('⚠️ Auth state inconsistent - logging out');
+        setIsAuthenticated(false);
+        localStorage.removeItem('dmh_auth');
+        setUser(null);
+        setIsLoading(false);
+        return;
+      }
+
+      // Not authenticated
+      setUser(null);
+      setIsLoading(false);
+    };
+
+    restoreUser();
+  }, [contextUser, isAuthenticated, setCurrentUser, setIsAuthenticated]);
 
   if (!isOpen) return null;
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-zinc-900 rounded-3xl max-w-lg w-full p-6 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
+          <p className="text-zinc-600 dark:text-zinc-400">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show login required if no user
   if (!user) {
