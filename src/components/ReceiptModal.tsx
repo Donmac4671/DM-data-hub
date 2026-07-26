@@ -1,5 +1,6 @@
 import React from 'react';
 import { Order } from '../types';
+import { renderStatusBadge } from '../utils/statusHelper';
 import { X, Printer, Download, CheckCircle2 } from 'lucide-react';
 
 interface ReceiptModalProps {
@@ -34,19 +35,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, onClose }) =>
               DONMAC DATA HUB
             </h3>
             <p className="text-[10px] text-zinc-400 font-sans">Ghana Telecom Data & MoMo Services</p>
-            <span className={`inline-block px-2 py-0.5 rounded font-bold text-[10px] uppercase mt-1 ${
-              order.status === 'completed'
-                ? 'bg-emerald-500/10 text-emerald-500'
-                : order.status === 'failed'
-                ? 'bg-rose-500/10 text-rose-500'
-                : 'bg-amber-500/10 text-amber-500'
-            }`}>
-              {order.status === 'completed'
-                ? 'COMPLETED & DELIVERED'
-                : order.status === 'failed'
-                ? 'ORDER FAILED'
-                : 'PENDING (DELIVERY 3-30 MINS)'}
-            </span>
+            <div className="flex justify-center mt-1">
+              {renderStatusBadge(order.status)}
+            </div>
             <p className="text-[9px] text-amber-600 dark:text-amber-400 font-sans italic mt-1">
               * Note: Data delivery takes 3 to 30 minutes. Status is updated accordingly by admin.
             </p>

@@ -58,7 +58,7 @@ export interface WalletTransaction {
   createdAt: string;
 }
 
-export type ClaimStatus = 'pending' | 'approved' | 'rejected';
+export type ClaimStatus = 'pending' | 'claimed' | 'rejected' | 'approved';
 
 export interface PaymentClaim {
   id: string;
