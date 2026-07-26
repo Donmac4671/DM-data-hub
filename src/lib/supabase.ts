@@ -19,7 +19,12 @@ export const supabase = isSupabaseConfigured
 
 // Admin client for writes (uses service role key - bypasses RLS)
 export const supabaseAdmin = isSupabaseConfigured && supabaseServiceRoleKey
-  ? createClient(supabaseUrl, supabaseServiceRoleKey)
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
   : null;
 
 // Helper to convert DB snake_case row to UserProfile
