@@ -112,36 +112,55 @@ function extractWebhookData(body) {
 
     // 5. REFERENCE CODE extraction - DMH-XXXXXX format
     // 4. REFERENCE CODE extraction - DMH-XXXXXX format
+// 4. REFERENCE CODE extraction - IMPROVED VERSION
 if (!referenceCode) {
-  // Priority 1: DMH-XXXXXX format
-  const dmhMatch = rawSms.match(/\b(DMH-\d{6})\b/i);
-  if (dmhMatch) {
-    referenceCode = dmhMatch[1].toUpperCase();
-    console.log('📌 Extracted DMH Reference Code:', referenceCode);
-  } 
-  // Priority 2: Any reference format in the SMS
-  else {
-    const refPatterns = [
-      /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-      /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-      /Code[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
-      /\b([A-Z]{2,4}-\d{4,8})\b/,
-      /\b([A-Za-z0-9]{6,12})\b/
-    ];
-    
-    for (const pattern of refPatterns) {
-      const match = rawSms.match(pattern);
-      if (match) {
-        let code = match[1].trim();
-        code = code.replace(/[,;.:!?]$/, '');
-        // Skip if it's just a number (transaction ID)
-        if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
-          referenceCode = code.toUpperCase();
-          console.log('📌 Extracted Reference Code:', referenceCode);
-          break;
-        }
+  console.log('🔍 Attempting to extract reference code from:', rawSms);
+  
+  // Try multiple patterns in order of priority
+  const refPatterns = [
+    // Pattern 1: DMH-XXXXXX (with dash)
+    /\b(DMH-\d{6})\b/i,
+    // Pattern 2: DMHXXXXXX (without dash)
+    /\b(DMH\d{6})\b/i,
+    // Pattern 3: Reference: CODE (captures until space, comma, or period)
+    /Reference[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+    // Pattern 4: Ref: CODE
+    /Ref[:\s]+([A-Za-z0-9_-]+)(?=[,\s.]|$)/i,
+    // Pattern 5: Any DMH pattern in the text
+    /DMH[-\s]*(\d{6})/i,
+    // Pattern 6: Any 6+ character alphanumeric code (fallback)
+    /\b([A-Za-z0-9]{6,12})\b/
+  ];
+  
+  for (const pattern of refPatterns) {
+    const match = rawSms.match(pattern);
+    if (match) {
+      let code = match[1] || match[0];
+      code = code.trim();
+      
+      // If we got DMH without dash, add it
+      if (/^DMH\d{6}$/i.test(code)) {
+        code = code.substring(0, 3) + '-' + code.substring(3);
+      }
+      
+      // If we got just numbers from DMH pattern
+      if (/^\d{6}$/.test(code) && rawSms.match(/DMH/i)) {
+        code = 'DMH-' + code;
+      }
+      
+      // Make sure it's a valid reference code
+      if (/^[A-Za-z0-9_-]+$/.test(code) && code.length >= 4 && !/^\d+$/.test(code)) {
+        referenceCode = code.toUpperCase();
+        console.log('📌 Extracted Reference Code:', referenceCode);
+        console.log('📌 Using pattern:', pattern);
+        break;
       }
     }
+  }
+  
+  // If still no reference, log the failure
+  if (!referenceCode) {
+    console.log('⚠️ No reference code found in SMS');
   }
 }
 
