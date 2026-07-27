@@ -7,7 +7,6 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_A
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -17,21 +16,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    // === CHECK IF THIS IS A POLLING REQUEST (GET without SMS data) ===
+    // Check if polling request
     const isPollingRequest = req.method === 'GET' && (
-      !req.query.text && 
-      !req.query.message && 
-      !req.query.sms && 
-      !req.query.body &&
-      !req.query.momoTxnId &&
-      !req.query.rawSms &&
-      !req.query.msg
+      !req.query.text && !req.query.message && !req.query.sms && !req.query.body &&
+      !req.query.momoTxnId && !req.query.rawSms && !req.query.msg
     );
 
-    // If it's a polling request, return the webhook list
     if (isPollingRequest) {
-      console.log('📋 Polling request - returning webhook list');
-      
       if (supabase) {
         const { data, error } = await supabase
           .from('sms_webhooks')
@@ -58,10 +49,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, count: 0, data: [] });
     }
 
-    // === PROCESS ACTUAL SMS WEBHOOK ===
-    console.log('📨 Processing SMS webhook...');
-
-    // Get SMS text
+    // Process SMS webhook
     let smsText = '';
     if (req.method === 'GET') {
       smsText = req.query.text || req.query.message || req.query.sms || req.query.body || '';
@@ -71,13 +59,11 @@ export default async function handler(req, res) {
 
     console.log('📝 Raw SMS:', smsText);
 
-    // If no SMS text, return error
     if (!smsText || smsText.length === 0) {
-      console.log('⚠️ No SMS text found');
       return res.status(200).send('OK - No SMS text found');
     }
 
-    // Extract data from SMS
+    // Extract data
     let momoTxnId = '';
     let amount = 0;
     let network = 'MTN';
@@ -92,7 +78,7 @@ export default async function handler(req, res) {
     if (amountMatch) amount = parseFloat(amountMatch[1]) || 0;
 
     // Extract Reference Code
-    const refMatch = smsText.match(/DMH-\d{6}/i);
+    const refMatch = smsText.match(/DMH-\d{6}\b/i);
     if (refMatch) {
       referenceCode = refMatch[0].toUpperCase();
     } else {
@@ -106,7 +92,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // Extract Network
     const lower = smsText.toLowerCase();
     if (lower.includes('telecel') || lower.includes('vodafone')) network = 'Telecel';
     else if (lower.includes('airtel') || lower.includes('tigo')) network = 'AirtelTigo';
@@ -114,8 +99,12 @@ export default async function handler(req, res) {
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
 
-    // Check for duplicate webhook
-    if (momoTxnId && supabase) {
+    // Save webhook
+    let webhookStatus = 'unclaimed';
+    let claimedBy = '-';
+
+    if (supabase && momoTxnId) {
+      // Check for duplicate
       const { data: existing } = await supabase
         .from('sms_webhooks')
         .select('momo_txn_id')
@@ -123,108 +112,154 @@ export default async function handler(req, res) {
         .maybeSingle();
 
       if (existing) {
-        console.log(`⏭️ Duplicate webhook for Txn ID: ${momoTxnId}, skipping...`);
+        console.log(`⏭️ Duplicate webhook for Txn ID: ${momoTxnId}`);
         return res.status(200).send(`OK - Duplicate Txn ID ${momoTxnId}`);
       }
+
+      await supabase
+        .from('sms_webhooks')
+        .upsert([{
+          momo_txn_id: momoTxnId,
+          amount: amount || 0,
+          network: network || 'MTN',
+          status: 'unclaimed',
+          claimed_by: '-',
+          reference_code: referenceCode || '',
+          raw_sms: smsText || '',
+          sender_phone: 'SMS Forwarder',
+          created_at: new Date().toISOString()
+        }], { onConflict: 'momo_txn_id' });
+      console.log('✅ Webhook saved to Supabase');
     }
 
-    // Save webhook to Supabase
-    if (supabase && momoTxnId) {
-      try {
-        await supabase
-          .from('sms_webhooks')
-          .upsert([{
-            momo_txn_id: momoTxnId,
-            amount: amount || 0,
-            network: network || 'MTN',
-            status: 'unclaimed',
-            claimed_by: '-',
-            reference_code: referenceCode || '',
-            raw_sms: smsText || '',
-            sender_phone: 'SMS Forwarder',
-            created_at: new Date().toISOString()
-          }], { onConflict: 'momo_txn_id' });
-        console.log('✅ Webhook saved to Supabase');
-      } catch (dbErr) {
-        console.error('❌ DB save error:', dbErr);
-      }
-    }
-
-    // === AUTO-CLAIM LOGIC ===
+    // === AUTO-CLAIM WITH EXPIRY HANDLING ===
     if (referenceCode && supabase) {
       const cleanRef = referenceCode.trim().toUpperCase();
       console.log(`🔍 Looking for pending top-up: "${cleanRef}"`);
 
       try {
-        // Find matching pending top-up (not expired)
+        // Find any pending top-up with this reference
         const { data: pending, error: pendingErr } = await supabase
           .from('pending_topups')
           .select('*')
           .eq('reference_code', cleanRef)
-          .eq('status', 'pending')
-          .gte('expires_at', new Date().toISOString());
+          .eq('status', 'pending');
 
         if (pendingErr) {
           console.error('❌ Query error:', pendingErr);
         } else if (pending && pending.length > 0) {
           const match = pending[0];
-          console.log('✅ Found pending top-up:', match.reference_code);
+          
+          // Check if expired
+          const now = new Date();
+          const expiresAt = new Date(match.expires_at);
+          const isExpired = expiresAt < now;
 
-          // Get user profile
-          const { data: userData } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('email', match.user_email.toLowerCase().trim());
+          console.log(`📅 Expires at: ${expiresAt.toISOString()}`);
+          console.log(`📅 Current time: ${now.toISOString()}`);
+          console.log(`⏰ Is expired: ${isExpired}`);
 
-          if (userData && userData.length > 0) {
-            const profile = userData[0];
-            const currentBalance = Number(profile.wallet_balance || 0);
-            const newBalance = Number((currentBalance + (amount || match.amount || 0)).toFixed(2));
-
-            console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance}`);
-
-            // Update wallet
-            await supabase
-              .from('profiles')
-              .update({ wallet_balance: newBalance })
-              .eq('id', profile.id);
-
-            // Update pending top-up
-            await supabase
-              .from('pending_topups')
-              .update({ status: 'completed' })
-              .eq('id', match.id);
-
-            // Update webhook
+          if (isExpired) {
+            console.log(`⚠️ Reference "${cleanRef}" has EXPIRED`);
+            webhookStatus = 'unclaimed';
+            claimedBy = `EXPIRED - Reference ${cleanRef} expired at ${match.expires_at}`;
+            
             await supabase
               .from('sms_webhooks')
               .update({
-                status: 'claimed',
-                claimed_by: `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`,
+                status: webhookStatus,
+                claimed_by: claimedBy,
                 reference_code: cleanRef
               })
               .eq('momo_txn_id', momoTxnId);
-
-            // Insert wallet transaction
-            await supabase
-              .from('wallet_transactions')
-              .insert([{
-                user_id: profile.id,
-                amount: amount || match.amount || 0,
-                type: 'topup',
-                description: `Auto-Credited via MoMo (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
-                reference_code: cleanRef,
-                momo_txn_id: momoTxnId,
-                balance_after: newBalance,
-                created_at: new Date().toISOString()
-              }]);
-
-            console.log(`✅✅✅ SUCCESS! Credited ${match.user_email} with GHS ${amount || match.amount || 0}`);
+            
+            console.log(`❌ Auto-credit failed: Reference expired`);
           } else {
-            console.log('❌ User profile not found for:', match.user_email);
+            // Reference is active - credit the user
+            console.log(`✅ Found active pending top-up: ${match.reference_code}`);
+            
+            // Get user profile
+            const { data: userData } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('email', match.user_email.toLowerCase().trim());
+
+            if (userData && userData.length > 0) {
+              const profile = userData[0];
+              const currentBalance = Number(profile.wallet_balance || 0);
+              const creditAmount = amount || match.amount || 0;
+              const newBalance = Number((currentBalance + creditAmount).toFixed(2));
+
+              console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance}`);
+
+              // Update wallet
+              await supabase
+                .from('profiles')
+                .update({ wallet_balance: newBalance })
+                .eq('id', profile.id);
+
+              // Update pending top-up
+              await supabase
+                .from('pending_topups')
+                .update({ status: 'completed' })
+                .eq('id', match.id);
+
+              // Update webhook
+              webhookStatus = 'claimed';
+              claimedBy = `${match.user_name || 'Customer'} (${match.user_email}) via Auto-Ref ${cleanRef}`;
+              
+              await supabase
+                .from('sms_webhooks')
+                .update({
+                  status: webhookStatus,
+                  claimed_by: claimedBy,
+                  reference_code: cleanRef
+                })
+                .eq('momo_txn_id', momoTxnId);
+
+              // Insert wallet transaction
+              await supabase
+                .from('wallet_transactions')
+                .insert([{
+                  user_id: profile.id,
+                  amount: creditAmount,
+                  type: 'topup',
+                  description: `Auto-Credited via MoMo (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
+                  reference_code: cleanRef,
+                  momo_txn_id: momoTxnId,
+                  balance_after: newBalance,
+                  created_at: new Date().toISOString()
+                }]);
+
+              console.log(`✅✅✅ SUCCESS! Auto-credited ${match.user_email} with GHS ${creditAmount}`);
+            } else {
+              console.log(`❌ User profile not found for: ${match.user_email}`);
+            }
           }
         } else {
-          console.log(`❌ No active pending top-up found for: "${cleanRef}"`);
+          // Check if it exists but is completed
+          const { data: completed } = await supabase
+            .from('pending_topups')
+            .select('*')
+            .eq('reference_code', cleanRef)
+            .eq('status', 'completed');
+          
+          if (completed && completed.length > 0) {
+            console.log(`⚠️ Reference "${cleanRef}" was already completed`);
+            webhookStatus = 'claimed';
+            claimedBy = `ALREADY COMPLETED - Reference ${cleanRef}`;
+            
+            await supabase
+              .from('sms_webhooks')
+              .update({
+                status: webhookStatus,
+                claimed_by: claimedBy,
+                reference_code: cleanRef
+              })
+              .eq('momo_txn_id', momoTxnId);
+          } else {
+            console.log(`❌ No pending top-up found for: "${cleanRef}"`);
+          }
         }
       } catch (autoErr) {
         console.error('❌ Auto-credit error:', autoErr);
