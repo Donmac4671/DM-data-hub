@@ -28,6 +28,8 @@ import {
   upsertAnnouncementInSupabase,
   deleteAnnouncementFromSupabase,
   deleteWebhookFromSupabase,
+  fetchPendingTopUpsFromSupabase,
+  createPendingTopUpInSupabase,
 } from '../lib/supabase';
 import {
   DataPackage,
@@ -939,38 +941,101 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Top Up Reference Generation
-  const [pendingTopUpRequests, setPendingTopUpRequests] = useState<PendingTopUpRequest[]>(() =>
-    getStorageItem('dmh_pending_topups', [])
+const [pendingTopUpRequests, setPendingTopUpRequests] = useState<PendingTopUpRequest[]>([]);
+
+
+// Load pending topups from Supabase whenever user changes
+useEffect(() => {
+
+  const loadPendingTopUps = async () => {
+
+    if (!currentUser || !isSupabaseConfigured) {
+      setPendingTopUpRequests([]);
+      return;
+    }
+
+
+    const data = await fetchPendingTopUpsFromSupabase(
+      currentUser.email
+    );
+
+
+    setPendingTopUpRequests(data);
+
+  };
+
+
+  loadPendingTopUps();
+
+}, [currentUser]);
+  const generateTopUpReference = (
+  amount:number,
+  momoNumber:string
+): PendingTopUpRequest => {
+
+
+  if(!currentUser){
+    throw new Error(
+      'You must be logged in to generate a top-up reference.'
+    );
+  }
+
+
+  const refCode =
+    `DMH-${Math.floor(100000 + Math.random()*900000)}`;
+
+
+  const expires =
+    new Date(Date.now()+120*60000).toISOString();
+
+
+
+  const newReq:PendingTopUpRequest = {
+
+    id:`topup-${Date.now()}`,
+
+    userId:currentUser.id,
+
+    userEmail:currentUser.email,
+
+    userName:currentUser.fullName,
+
+    referenceCode:refCode,
+
+    amount,
+
+    momoNumberToPay:'0549358359',
+
+    expiresAt:expires,
+
+    status:'pending',
+
+    createdAt:new Date().toISOString()
+
+  };
+
+
+  // Save permanently to Supabase
+  createPendingTopUpInSupabase(
+    refCode,
+    amount,
+    currentUser.email,
+    currentUser.fullName,
+    currentUser.id,
+    momoNumber
   );
 
-  useEffect(() => {
-    localStorage.setItem('dmh_pending_topups', JSON.stringify(pendingTopUpRequests));
-  }, [pendingTopUpRequests]);
 
-  const generateTopUpReference = (amount: number, momoNumber: string): PendingTopUpRequest => {
-    if (!currentUser) {
-      throw new Error('You must be logged in to generate a top-up reference.');
-    }
-    const refCode = `DMH-${Math.floor(100000 + Math.random() * 900000)}`;
-    const expires = new Date(Date.now() + 30 * 60000).toISOString(); // 30 mins expiry
+  // Update current screen immediately
+  setPendingTopUpRequests(prev=>[
+    newReq,
+    ...prev
+  ]);
 
-    const newReq: PendingTopUpRequest = {
-      id: `topup-req-${Date.now()}`,
-      userId: currentUser.id,
-      userEmail: currentUser.email,
-      userName: currentUser.fullName,
-      referenceCode: refCode,
-      amount,
-      momoNumberToPay: '0549358359', // Donmac Official MoMo Merchant
-      expiresAt: expires,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-    };
 
-    setPendingTopUpRequests(prev => [newReq, ...prev]);
-    addAuditLog('GENERATE_TOPUP_REF', `Ref ${refCode} for GHS ${amount} generated for ${currentUser.email}`);
-    return newReq;
-  };
+  return newReq;
+
+};
 
   // SMS Webhook & Auto-Crediting Engine
   const [webhookLogs, setWebhookLogs] = useState<SmsWebhookPayload[]>(() =>
