@@ -267,6 +267,63 @@ export async function createPendingTopUpInSupabase(
     return { reference_code: referenceCode, amount, status: 'pending' };
   }
 
+  export async function fetchPendingTopUpsFromSupabase(
+  userEmail: string
+): Promise<any[]> {
+
+  if (!supabase) return [];
+
+  try {
+
+    const { data, error } = await supabase
+      .from('pending_topups')
+      .select('*')
+      .eq(
+        'user_email',
+        userEmail.toLowerCase().trim()
+      )
+      .order(
+        'created_at',
+        { ascending: false }
+      );
+
+
+    if (error) {
+      console.error(
+        'Pending topup fetch error:',
+        error.message
+      );
+      return [];
+    }
+
+
+    return (data || []).map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userName: row.user_name,
+      referenceCode: row.reference_code,
+      amount: Number(row.amount),
+      momoNumberToPay: row.momo_number_to_pay,
+      status: row.status,
+      expiresAt: row.expires_at,
+      createdAt: row.created_at,
+      completedAt: row.completed_at
+    }));
+
+
+  } catch (err) {
+
+    console.error(
+      'fetchPendingTopUpsFromSupabase error:',
+      err
+    );
+
+    return [];
+
+  }
+}
+
   try {
     // Calculate expiry time (30 minutes from now)
     const expiresAt = new Date(Date.now() + 120 * 60000).toISOString();
