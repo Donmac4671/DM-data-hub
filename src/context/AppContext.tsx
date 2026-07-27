@@ -954,11 +954,9 @@ useEffect(() => {
       return;
     }
 
-
     const data = await fetchPendingTopUpsFromSupabase(
       currentUser.email
     );
-
 
     setPendingTopUpRequests(data);
 
@@ -966,6 +964,15 @@ useEffect(() => {
 
 
   loadPendingTopUps();
+
+
+  const timer = setInterval(() => {
+    loadPendingTopUps();
+  }, 10000); // refresh every 10 seconds
+
+
+  return () => clearInterval(timer);
+
 
 }, [currentUser]);
   const generateTopUpReference = (
@@ -1013,17 +1020,6 @@ useEffect(() => {
     createdAt:new Date().toISOString()
 
   };
-
-
-  // Save permanently to Supabase
-  createPendingTopUpInSupabase(
-    refCode,
-    amount,
-    currentUser.email,
-    currentUser.fullName,
-    currentUser.id,
-    momoNumber
-  );
 
 
   // Update current screen immediately
