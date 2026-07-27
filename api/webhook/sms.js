@@ -1,11 +1,18 @@
 // api/webhook/sms.js
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
-
+const supabase =
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      })
+    : null;
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -186,10 +193,25 @@ export default async function handler(req, res) {
 
             if (userData && userData.length > 0) {
               const profile = userData[0];
-              const currentBalance = Number(profile.wallet_balance || 0);
-              const creditAmount = amount || match.amount || 0;
-              const newBalance = Number((currentBalance + creditAmount).toFixed(2));
+              const creditAmount = Number(amount || match.amount || 0);
 
+const { data: latestProfile, error: profileError } =
+await supabase
+  .from('profiles')
+  .select('wallet_balance')
+  .eq('id', profile.id)
+  .single();
+
+if(profileError){
+ console.error(profileError);
+ return;
+}
+
+const currentBalance =
+Number(latestProfile.wallet_balance || 0);
+
+const newBalance =
+Number((currentBalance + creditAmount).toFixed(2));
               console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance}`);
 
               // Update wallet
@@ -199,10 +221,20 @@ export default async function handler(req, res) {
                 .eq('id', profile.id);
 
               // Update pending top-up
-              await supabase
-                .from('pending_topups')
-                .update({ status: 'completed' })
-                .eq('id', match.id);
+              const { error: topupUpdateError } = await supabase
+  .from('pending_topups')
+  .update({
+    status: 'completed',
+    completed_at: new Date().toISOString()
+  })
+  .eq('id', match.id);
+
+if (topupUpdateError) {
+  console.error(
+    'Pending topup update failed:',
+    topupUpdateError.message
+  );
+}
 
               // Update webhook
               webhookStatus = 'claimed';
@@ -250,13 +282,12 @@ export default async function handler(req, res) {
             claimedBy = `ALREADY COMPLETED - Reference ${cleanRef}`;
             
             await supabase
-              .from('sms_webhooks')
-              .update({
-                status: webhookStatus,
-                claimed_by: claimedBy,
-                reference_code: cleanRef
-              })
-              .eq('momo_txn_id', momoTxnId);
+.from('sms_webhooks')
+.update({
+ status: 'claimed',
+ claimed_by: 'Customer Name'
+})
+.eq('momo_txn_id', momoTxnId);
           } else {
             console.log(`❌ No pending top-up found for: "${cleanRef}"`);
           }
