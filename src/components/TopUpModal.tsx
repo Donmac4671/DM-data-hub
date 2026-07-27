@@ -320,7 +320,7 @@ await createPendingTopUpInSupabase(
           This reference will expire in:
         </p>
         <span className="text-amber-600 dark:text-amber-400 font-bold">
-          ⏰ 30 minutes
+          ⏰ 2 hours
         </span>
       </div>
       
