@@ -108,6 +108,11 @@ if (refMatch) {
     else network = 'MTN';
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
+    console.log('🔧 Supabase status:', {
+  connected: !!supabase,
+  url: !!process.env.SUPABASE_URL,
+  key: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+});
 
     // Save webhook
     let webhookStatus = 'unclaimed';
@@ -126,21 +131,32 @@ if (refMatch) {
         return res.status(200).send(`OK - Duplicate Txn ID ${momoTxnId}`);
       }
 
-      await supabase
-        .from('sms_webhooks')
-        .upsert([{
-          momo_txn_id: momoTxnId,
-          amount: amount || 0,
-          network: network || 'MTN',
-          status: 'unclaimed',
-          claimed_by: '-',
-          reference_code: referenceCode || '',
-          raw_sms: smsText || '',
-          sender_phone: 'SMS Forwarder',
-          created_at: new Date().toISOString()
-        }], { onConflict: 'momo_txn_id' });
-      console.log('✅ Webhook saved to Supabase');
+      const { error: webhookError } = await supabase
+  .from('sms_webhooks')
+  .upsert(
+    [{
+      id: `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
+      momo_txn_id: momoTxnId,
+      amount: Number(amount || 0),
+      network: network || 'MTN',
+      status: 'unclaimed',
+      claimed_by: '-',
+      reference_code: referenceCode || '',
+      raw_sms: smsText || '',
+      sender_phone: 'SMS Forwarder',
+      created_at: new Date().toISOString()
+    }],
+    {
+      onConflict: 'momo_txn_id'
     }
+  );
+
+if (webhookError) {
+  console.error('❌ SMS webhook insert failed:', webhookError);
+  throw webhookError;
+}
+
+console.log('✅ Webhook saved to Supabase');
 
     // === AUTO-CLAIM WITH EXPIRY HANDLING ===
     if (referenceCode && supabase) {
@@ -205,9 +221,18 @@ await supabase
   .eq('id', profile.id)
   .single();
 
-if(profileError){
- console.error(profileError);
- return;
+if (profileError) {
+  console.error('Profile lookup failed:', profileError);
+
+  await supabase
+    .from('sms_webhooks')
+    .update({
+      status: 'error',
+      claimed_by: profileError.message
+    })
+    .eq('momo_txn_id', momoTxnId);
+
+  throw profileError;
 }
 
 const currentBalance =
@@ -218,11 +243,18 @@ Number((currentBalance + creditAmount).toFixed(2));
               console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance}`);
 
               // Update wallet
-              await supabase
-                .from('profiles')
-                .update({ wallet_balance: newBalance })
-                .eq('id', profile.id);
+             const { error: walletError } =
+await supabase
+  .from('profiles')
+  .update({
+    wallet_balance: newBalance
+  })
+  .eq('id', profile.id);
 
+if (walletError) {
+  console.error(walletError);
+  throw walletError;
+}
               // Update pending top-up
               const { error: topupUpdateError } = await supabase
   .from('pending_topups')
@@ -234,10 +266,13 @@ Number((currentBalance + creditAmount).toFixed(2));
 
 if (topupUpdateError) {
   console.error(
-    'Pending topup update failed:',
-    topupUpdateError.message
+    '❌ Pending topup update failed:',
+    topupUpdateError
   );
+  throw topupUpdateError;
 }
+
+console.log('✅ Pending topup marked completed');
 
               // Update webhook
               webhookStatus = 'claimed';
@@ -253,19 +288,26 @@ if (topupUpdateError) {
                 .eq('momo_txn_id', momoTxnId);
 
               // Insert wallet transaction
-              await supabase
-                .from('wallet_transactions')
-                .insert([{
-                  user_id: profile.id,
-                  amount: creditAmount,
-                  type: 'topup',
-                  description: `Auto-Credited via MoMo (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
-                  reference_code: cleanRef,
-                  momo_txn_id: momoTxnId,
-                  balance_after: newBalance,
-                  created_at: new Date().toISOString()
-                }]);
+              const { error: transactionError } = await supabase
+  .from('wallet_transactions')
+  .insert([{
+    id: `wallet-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
+    user_id: profile.id,
+    amount: creditAmount,
+    type: 'topup',
+    description: `Auto-Credited via MoMo (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
+    reference_code: cleanRef,
+    momo_txn_id: momoTxnId,
+    balance_after: newBalance,
+    created_at: new Date().toISOString()
+  }]);
 
+if (transactionError) {
+  console.error('❌ Wallet transaction insert failed:', transactionError);
+  throw transactionError;
+}
+
+console.log('✅ Wallet transaction created');
               console.log(`✅✅✅ SUCCESS! Auto-credited ${match.user_email} with GHS ${creditAmount}`);
             } else {
               console.log(`❌ User profile not found for: ${match.user_email}`);
