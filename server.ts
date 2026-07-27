@@ -3,8 +3,11 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabaseUrl =
+process.env.SUPABASE_URL || '';
+
+const supabaseKey =
+process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const supabaseServer = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
@@ -340,6 +343,27 @@ const handleWebhookRequest = async (req: express.Request, res: express.Response)
     };
 
     serverWebhooks.unshift(newWebhook);
+
+    // Save webhook first before auto-credit
+if (supabaseServer) {
+  const { error } = await supabaseServer
+    .from('sms_webhooks')
+    .upsert([{
+      momo_txn_id: effectiveTxnId,
+      amount: effectiveAmount,
+      network: effectiveNetwork,
+      status: 'unclaimed',
+      claimed_by: '-',
+      reference_code: referenceCode || '',
+      raw_sms: rawSms || JSON.stringify(sourceData),
+      sender_phone: senderPhone || '',
+      created_at: new Date().toISOString()
+    }], { onConflict: 'momo_txn_id' });
+
+  if (error) {
+    console.error('Failed saving webhook:', error.message);
+  }
+}
 
     // Try auto-credit if reference code exists
     if (referenceCode && supabaseServer) {
