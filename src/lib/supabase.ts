@@ -250,6 +250,7 @@ export async function createPendingTopUpInSupabase(
   userId: string,
   momoNumberToPay: string
 ): Promise<any> {
+
   console.log('🔍 createPendingTopUpInSupabase called with:', {
     referenceCode,
     amount,
@@ -260,20 +261,111 @@ export async function createPendingTopUpInSupabase(
   });
 
   const client = supabaseAdmin || supabase;
-  
+
   if (!client) {
-    console.warn('❌ Supabase not configured, saving to localStorage fallback');
+    console.warn('❌ Supabase not configured');
     savePendingTopupToLocalStorage(referenceCode, amount);
-    return { reference_code: referenceCode, amount, status: 'pending' };
+    return {
+      reference_code: referenceCode,
+      amount,
+      status: 'pending'
+    };
   }
 
-  export async function fetchPendingTopUpsFromSupabase(
+
+  try {
+
+    const expiresAt = new Date(
+      Date.now() + 120 * 60000
+    ).toISOString();
+
+
+    const insertData = {
+      id: `topup-${Date.now()}-${Math.random().toString(36).substring(2,7)}`,
+      user_id: userId,
+      user_email: userEmail.toLowerCase().trim(),
+      user_name: userName || 'Customer',
+      reference_code: referenceCode,
+      amount,
+      momo_number_to_pay: momoNumberToPay || '0549358359',
+      status: 'pending',
+      expires_at: expiresAt,
+      created_at: new Date().toISOString()
+    };
+
+
+    const { data, error } = await client
+      .from('pending_topups')
+      .insert([insertData])
+      .select()
+      .single();
+
+
+    if(error){
+      console.error(
+        'Create pending topup error:',
+        error.message
+      );
+
+      savePendingTopupToLocalStorage(
+        referenceCode,
+        amount
+      );
+
+      return {
+        reference_code: referenceCode,
+        amount,
+        status:'pending'
+      };
+    }
+
+
+    savePendingTopupToLocalStorage(
+      referenceCode,
+      amount
+    );
+
+
+    return data;
+
+
+  } catch(err){
+
+    console.error(
+      'createPendingTopUp error:',
+      err
+    );
+
+    savePendingTopupToLocalStorage(
+      referenceCode,
+      amount
+    );
+
+
+    return {
+      reference_code: referenceCode,
+      amount,
+      status:'pending'
+    };
+  }
+}
+
+
+
+// ==========================================
+// FETCH USER PENDING TOPUPS
+// ==========================================
+
+export async function fetchPendingTopUpsFromSupabase(
   userEmail: string
 ): Promise<any[]> {
 
-  if (!supabase) return [];
+
+  if(!supabase) return [];
+
 
   try {
+
 
     const { data, error } = await supabase
       .from('pending_topups')
@@ -284,35 +376,52 @@ export async function createPendingTopUpInSupabase(
       )
       .order(
         'created_at',
-        { ascending: false }
+        {
+          ascending:false
+        }
       );
 
 
-    if (error) {
+    if(error){
+
       console.error(
         'Pending topup fetch error:',
         error.message
       );
+
       return [];
+
     }
 
 
     return (data || []).map(row => ({
+
       id: row.id,
+
       userId: row.user_id,
+
       userEmail: row.user_email,
+
       userName: row.user_name,
+
       referenceCode: row.reference_code,
-      amount: Number(row.amount),
+
+      amount:Number(row.amount),
+
       momoNumberToPay: row.momo_number_to_pay,
+
       status: row.status,
+
       expiresAt: row.expires_at,
+
       createdAt: row.created_at,
+
       completedAt: row.completed_at
+
     }));
 
 
-  } catch (err) {
+  } catch(err){
 
     console.error(
       'fetchPendingTopUpsFromSupabase error:',
@@ -322,55 +431,7 @@ export async function createPendingTopUpInSupabase(
     return [];
 
   }
-}
 
-  try {
-    // Calculate expiry time (30 minutes from now)
-    const expiresAt = new Date(Date.now() + 120 * 60000).toISOString();
-    
-    const insertData = {
-      id: `topup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      user_id: userId,
-      user_email: userEmail.toLowerCase().trim(),
-      user_name: userName || 'Customer',
-      reference_code: referenceCode,
-      amount: amount,
-      momo_number_to_pay: momoNumberToPay || '0549358359',
-      status: 'pending',
-      expires_at: expiresAt, // 30 minutes expiry
-      created_at: new Date().toISOString()
-    };
-
-    console.log('📝 Inserting pending top-up with data:', insertData);
-    console.log(`⏰ This reference expires at: ${new Date(expiresAt).toLocaleString()}`);
-
-    const { data, error } = await client
-      .from('pending_topups')
-      .insert([insertData])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('❌ Error creating pending top-up:', error);
-      console.error('❌ Error details:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      });
-      
-      savePendingTopupToLocalStorage(referenceCode, amount);
-      return { reference_code: referenceCode, amount, status: 'pending' };
-    }
-
-    console.log('✅ Pending top-up created in Supabase:', data);
-    savePendingTopupToLocalStorage(referenceCode, amount);
-    return data;
-  } catch (err) {
-    console.error('❌ Failed to create pending top-up:', err);
-    savePendingTopupToLocalStorage(referenceCode, amount);
-    return { reference_code: referenceCode, amount, status: 'pending' };
-  }
 }
 // ==========================================
 // ORDERS SUPABASE INTEGRATION
