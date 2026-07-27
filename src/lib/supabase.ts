@@ -269,7 +269,7 @@ export async function createPendingTopUpInSupabase(
 
   try {
     // Calculate expiry time (30 minutes from now)
-    const expiresAt = new Date(Date.now() + 30 * 60000).toISOString();
+    const expiresAt = new Date(Date.now() + 120 * 60000).toISOString();
     
     const insertData = {
       id: `topup-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
