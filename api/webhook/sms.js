@@ -7,7 +7,6 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_A
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -17,87 +16,55 @@ export default async function handler(req, res) {
   }
 
   try {
-    // === CRITICAL FIX: Get SMS text from query parameters ===
+    // Get SMS text
     let smsText = '';
-    
     if (req.method === 'GET') {
-      // For GET requests, check query parameters
       smsText = req.query.text || req.query.message || req.query.sms || req.query.body || '';
-      console.log('📝 GET query params:', req.query);
     } else if (req.method === 'POST') {
-      // For POST requests, check body
       smsText = req.body?.text || req.body?.message || req.body?.sms || req.body?.body || '';
-      console.log('📝 POST body:', req.body);
     }
 
-    console.log('📝 Raw SMS Text:', smsText);
-    console.log('📝 SMS Text length:', smsText?.length);
+    console.log('📝 Raw SMS:', smsText);
 
-    // If no SMS text, return error
-    if (!smsText || smsText.length === 0) {
-      console.log('⚠️ No SMS text found in request');
-      return res.status(200).send('OK - No SMS text found');
-    }
-
-    // Extract data from SMS
+    // Extract data
     let momoTxnId = '';
     let amount = 0;
     let network = 'MTN';
     let referenceCode = '';
 
-    // Extract Transaction ID (11 digits)
+    // Extract Transaction ID
     const txnMatch = smsText.match(/\b(\d{11})\b/);
-    if (txnMatch) {
-      momoTxnId = txnMatch[1];
-      console.log('✅ Extracted Transaction ID:', momoTxnId);
-    } else {
-      // Try 8-16 digits
-      const txnMatch2 = smsText.match(/\b(\d{8,16})\b/);
-      if (txnMatch2) {
-        momoTxnId = txnMatch2[1];
-        console.log('✅ Extracted Transaction ID (8-16 digits):', momoTxnId);
-      }
-    }
+    if (txnMatch) momoTxnId = txnMatch[1];
 
     // Extract Amount
     const amountMatch = smsText.match(/GHS\s*([0-9.]+)/i);
-    if (amountMatch) {
-      amount = parseFloat(amountMatch[1]) || 0;
-      console.log('💰 Extracted Amount:', amount);
-    }
+    if (amountMatch) amount = parseFloat(amountMatch[1]) || 0;
 
-    // Extract Reference Code (DMH-XXXXXX)
+    // Extract Reference Code
     const refMatch = smsText.match(/DMH-\d{6}/i);
     if (refMatch) {
       referenceCode = refMatch[0].toUpperCase();
-      console.log('📌 Extracted Reference Code:', referenceCode);
     } else {
-      // Try "Reference: CODE" pattern
       const refMatch2 = smsText.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
       if (refMatch2) {
         let code = refMatch2[1].trim();
         code = code.replace(/[,;.:!?]$/, '');
         if (code.length >= 4) {
           referenceCode = code.toUpperCase();
-          console.log('📌 Extracted from "Reference:" pattern:', referenceCode);
         }
       }
     }
 
     // Extract Network
     const lower = smsText.toLowerCase();
-    if (lower.includes('telecel') || lower.includes('vodafone')) {
-      network = 'Telecel';
-    } else if (lower.includes('airtel') || lower.includes('tigo')) {
-      network = 'AirtelTigo';
-    } else {
-      network = 'MTN';
-    }
+    if (lower.includes('telecel') || lower.includes('vodafone')) network = 'Telecel';
+    else if (lower.includes('airtel') || lower.includes('tigo')) network = 'AirtelTigo';
+    else network = 'MTN';
 
-    console.log('📊 Final Extraction:', { momoTxnId, amount, network, referenceCode });
+    console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
 
-    // Save to Supabase
-    if (supabase && momoTxnId) {
+    // Save webhook to Supabase
+    if (supabase) {
       try {
         await supabase
           .from('sms_webhooks')
@@ -118,24 +85,39 @@ export default async function handler(req, res) {
       }
     }
 
-    // AUTO-CLAIM: Try to credit if reference code exists
+    // === AUTO-CLAIM LOGIC ===
     if (referenceCode && supabase) {
       const cleanRef = referenceCode.trim().toUpperCase();
-      console.log('🔍 Attempting auto-credit for:', cleanRef);
+      console.log(`🔍 Looking for pending top-up: "${cleanRef}"`);
 
       try {
+        // Log all pending top-ups for debugging
+        const { data: allPending, error: allErr } = await supabase
+          .from('pending_topups')
+          .select('reference_code, status, expires_at, user_email')
+          .eq('status', 'pending');
+        
+        if (!allErr && allPending) {
+          console.log('📋 All pending references:', allPending.map(p => p.reference_code));
+        }
+
+        // Find matching pending top-up (check if not expired)
         const { data: pending, error: pendingErr } = await supabase
           .from('pending_topups')
           .select('*')
           .eq('reference_code', cleanRef)
-          .eq('status', 'pending');
+          .eq('status', 'pending')
+          .gte('expires_at', new Date().toISOString()); // Only non-expired
 
         if (pendingErr) {
-          console.error('❌ Pending query error:', pendingErr);
+          console.error('❌ Query error:', pendingErr);
         } else if (pending && pending.length > 0) {
           const match = pending[0];
           console.log('✅ Found pending top-up:', match.reference_code);
+          console.log('👤 User:', match.user_email);
+          console.log('💰 Amount:', match.amount);
 
+          // Get user profile
           const { data: userData } = await supabase
             .from('profiles')
             .select('*')
@@ -144,7 +126,7 @@ export default async function handler(req, res) {
           if (userData && userData.length > 0) {
             const profile = userData[0];
             const currentBalance = Number(profile.wallet_balance || 0);
-            const newBalance = Number((currentBalance + (amount || 0)).toFixed(2));
+            const newBalance = Number((currentBalance + (amount || match.amount || 0)).toFixed(2));
 
             console.log(`💰 Updating wallet: ${currentBalance} -> ${newBalance}`);
 
@@ -175,19 +157,33 @@ export default async function handler(req, res) {
               .from('wallet_transactions')
               .insert([{
                 user_id: profile.id,
-                amount: amount || 0,
+                amount: amount || match.amount || 0,
                 type: 'topup',
-                description: `Auto-Credited via MoMo Webhook (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
+                description: `Auto-Credited via MoMo (Txn: ${momoTxnId}, Ref: ${cleanRef})`,
                 reference_code: cleanRef,
                 momo_txn_id: momoTxnId,
                 balance_after: newBalance,
                 created_at: new Date().toISOString()
               }]);
 
-            console.log(`✅✅✅ SUCCESS! Auto-credited ${match.user_email} with GHS ${amount || 0}`);
+            console.log(`✅✅✅ SUCCESS! Credited ${match.user_email} with GHS ${amount || match.amount || 0}`);
+          } else {
+            console.log('❌ User profile not found for:', match.user_email);
           }
         } else {
-          console.log('❌ No pending top-up found for:', cleanRef);
+          console.log(`❌ No active pending top-up found for: "${cleanRef}"`);
+          
+          // Check if it exists but is expired
+          const { data: expired } = await supabase
+            .from('pending_topups')
+            .select('*')
+            .eq('reference_code', cleanRef)
+            .eq('status', 'pending')
+            .lt('expires_at', new Date().toISOString());
+          
+          if (expired && expired.length > 0) {
+            console.log(`⚠️ Found expired reference: ${cleanRef}`);
+          }
         }
       } catch (autoErr) {
         console.error('❌ Auto-credit error:', autoErr);
