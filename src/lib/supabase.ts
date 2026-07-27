@@ -279,7 +279,17 @@ export async function createPendingTopUpInSupabase(
       Date.now() + 120 * 60000
     ).toISOString();
 
+    // Prevent duplicate reference codes
+const { data: existingTopup } = await client
+  .from('pending_topups')
+  .select('*')
+  .eq('reference_code', referenceCode)
+  .maybeSingle();
 
+if (existingTopup) {
+  console.log('⚠️ Pending topup already exists:', existingTopup);
+  return existingTopup;
+}
     const insertData = {
       id: `topup-${Date.now()}-${Math.random().toString(36).substring(2,7)}`,
       user_id: userId,
@@ -431,7 +441,6 @@ export async function fetchPendingTopUpsFromSupabase(
     return [];
 
   }
-
 }
 // ==========================================
 // ORDERS SUPABASE INTEGRATION
