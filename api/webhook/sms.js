@@ -77,27 +77,30 @@ export default async function handler(req, res) {
     let referenceCode = '';
 
     // Extract Transaction ID
-    const txnMatch = smsText.match(/\b(\d{11})\b/);
-    if (txnMatch) momoTxnId = txnMatch[1];
+    const txnMatch = smsText.match(/Transaction ID:\s*(\d+)/i);
+
+if (txnMatch) {
+  momoTxnId = txnMatch[1];
+}
 
     // Extract Amount
     const amountMatch = smsText.match(/GHS\s*([0-9.]+)/i);
     if (amountMatch) amount = parseFloat(amountMatch[1]) || 0;
 
     // Extract Reference Code
-    const refMatch = smsText.match(/DMH-\d{6}\b/i);
-    if (refMatch) {
-      referenceCode = refMatch[0].toUpperCase();
-    } else {
-      const refMatch2 = smsText.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
-      if (refMatch2) {
-        let code = refMatch2[1].trim();
-        code = code.replace(/[,;.:!?]$/, '');
-        if (code.length >= 4) {
-          referenceCode = code.toUpperCase();
-        }
-      }
-    }
+const refMatch = smsText.match(/\bDMH-\d{6}\b/i);
+
+if (refMatch) {
+  referenceCode = refMatch[0].toUpperCase();
+} else {
+  const refMatch2 = smsText.match(/Reference:.*?,(DMH[-]?\d+)/i);
+
+  if (refMatch2) {
+    referenceCode = refMatch2[1]
+      .replace('DMH', 'DMH-')
+      .toUpperCase();
+  }
+}
 
     const lower = smsText.toLowerCase();
     if (lower.includes('telecel') || lower.includes('vodafone')) network = 'Telecel';
