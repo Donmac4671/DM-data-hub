@@ -7,6 +7,7 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_A
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 export default async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -16,6 +17,50 @@ export default async function handler(req, res) {
   }
 
   try {
+    // === CHECK IF THIS IS A POLLING REQUEST (GET without SMS data) ===
+    const isPollingRequest = req.method === 'GET' && (
+      !req.query.text && 
+      !req.query.message && 
+      !req.query.sms && 
+      !req.query.body &&
+      !req.query.momoTxnId &&
+      !req.query.rawSms &&
+      !req.query.msg
+    );
+
+    // If it's a polling request, return the webhook list
+    if (isPollingRequest) {
+      console.log('📋 Polling request - returning webhook list');
+      
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('sms_webhooks')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        if (!error && data) {
+          const formatted = data.map(row => ({
+            id: row.id,
+            momoTxnId: row.momo_txn_id,
+            amount: Number(row.amount),
+            network: row.network,
+            status: row.status || 'unclaimed',
+            claimedBy: row.claimed_by || '-',
+            referenceCode: row.reference_code || '',
+            rawSms: row.raw_sms || '',
+            senderPhone: row.sender_phone || '',
+            date: row.created_at
+          }));
+          return res.status(200).json({ success: true, count: formatted.length, data: formatted });
+        }
+      }
+      return res.status(200).json({ success: true, count: 0, data: [] });
+    }
+
+    // === PROCESS ACTUAL SMS WEBHOOK ===
+    console.log('📨 Processing SMS webhook...');
+
     // Get SMS text
     let smsText = '';
     if (req.method === 'GET') {
@@ -26,7 +71,13 @@ export default async function handler(req, res) {
 
     console.log('📝 Raw SMS:', smsText);
 
-    // Extract data
+    // If no SMS text, return error
+    if (!smsText || smsText.length === 0) {
+      console.log('⚠️ No SMS text found');
+      return res.status(200).send('OK - No SMS text found');
+    }
+
+    // Extract data from SMS
     let momoTxnId = '';
     let amount = 0;
     let network = 'MTN';
@@ -63,13 +114,27 @@ export default async function handler(req, res) {
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
 
+    // Check for duplicate webhook
+    if (momoTxnId && supabase) {
+      const { data: existing } = await supabase
+        .from('sms_webhooks')
+        .select('momo_txn_id')
+        .eq('momo_txn_id', momoTxnId)
+        .maybeSingle();
+
+      if (existing) {
+        console.log(`⏭️ Duplicate webhook for Txn ID: ${momoTxnId}, skipping...`);
+        return res.status(200).send(`OK - Duplicate Txn ID ${momoTxnId}`);
+      }
+    }
+
     // Save webhook to Supabase
-    if (supabase) {
+    if (supabase && momoTxnId) {
       try {
         await supabase
           .from('sms_webhooks')
           .upsert([{
-            momo_txn_id: momoTxnId || `SMS-${Date.now()}`,
+            momo_txn_id: momoTxnId,
             amount: amount || 0,
             network: network || 'MTN',
             status: 'unclaimed',
@@ -91,31 +156,19 @@ export default async function handler(req, res) {
       console.log(`🔍 Looking for pending top-up: "${cleanRef}"`);
 
       try {
-        // Log all pending top-ups for debugging
-        const { data: allPending, error: allErr } = await supabase
-          .from('pending_topups')
-          .select('reference_code, status, expires_at, user_email')
-          .eq('status', 'pending');
-        
-        if (!allErr && allPending) {
-          console.log('📋 All pending references:', allPending.map(p => p.reference_code));
-        }
-
-        // Find matching pending top-up (check if not expired)
+        // Find matching pending top-up (not expired)
         const { data: pending, error: pendingErr } = await supabase
           .from('pending_topups')
           .select('*')
           .eq('reference_code', cleanRef)
           .eq('status', 'pending')
-          .gte('expires_at', new Date().toISOString()); // Only non-expired
+          .gte('expires_at', new Date().toISOString());
 
         if (pendingErr) {
           console.error('❌ Query error:', pendingErr);
         } else if (pending && pending.length > 0) {
           const match = pending[0];
           console.log('✅ Found pending top-up:', match.reference_code);
-          console.log('👤 User:', match.user_email);
-          console.log('💰 Amount:', match.amount);
 
           // Get user profile
           const { data: userData } = await supabase
@@ -172,18 +225,6 @@ export default async function handler(req, res) {
           }
         } else {
           console.log(`❌ No active pending top-up found for: "${cleanRef}"`);
-          
-          // Check if it exists but is expired
-          const { data: expired } = await supabase
-            .from('pending_topups')
-            .select('*')
-            .eq('reference_code', cleanRef)
-            .eq('status', 'pending')
-            .lt('expires_at', new Date().toISOString());
-          
-          if (expired && expired.length > 0) {
-            console.log(`⚠️ Found expired reference: ${cleanRef}`);
-          }
         }
       } catch (autoErr) {
         console.error('❌ Auto-credit error:', autoErr);
