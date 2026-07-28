@@ -168,10 +168,14 @@ export default async function handler(req, res) {
       ? (req.query.from || req.query.sender || req.query.phone || req.query.senderPhone || req.query.msisdn || 'SMS Forwarder')
       : (req.body?.from || req.body?.sender || req.body?.phone || req.body?.senderPhone || req.body?.msisdn || 'SMS Forwarder');
 
-    const txnMatch = sourceText.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|MTN\s*Ref)[:\s]*([0-9A-Za-z]{8,16})/i) ||
-      sourceText.match(/\b([0-9]{11,16})\b/);
-    if (txnMatch) {
-      momoTxnId = txnMatch[1] || txnMatch[0];
+    const explicitTxn = sourceText.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|TransactionID|TRANSACTION ID)[:\s]*([0-9]{8,16})/i);
+    if (explicitTxn) {
+      momoTxnId = explicitTxn[1];
+    } else {
+      const txnMatches = [...sourceText.matchAll(/\b([0-9]{8,16})\b/g)].map(m => m[1]);
+      if (txnMatches.length > 0) {
+        momoTxnId = txnMatches[txnMatches.length - 1];
+      }
     }
 
     const amountMatch = sourceText.match(/(?:GHS|GHC|GH₵|₵)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
@@ -183,9 +187,11 @@ export default async function handler(req, res) {
     else if (lower.includes('airtel') || lower.includes('tigo') || lower.includes('at money')) network = 'AirtelTigo';
     else network = 'MTN';
 
-    const refMatch = sourceText.match(/\bDMH[- ]?\d{6}\b/i) || sourceText.match(/Reference[:\s]*([A-Za-z0-9-]{6,16})/i);
+    const refMatch = sourceText.match(/DMH[- ]?\d{5,7}/i) || sourceText.match(/Reference[:\s]+([^\s,;:.!?]+)/i);
     if (refMatch) {
-      referenceCode = (refMatch[1] || refMatch[0]).toString().replace(/\s+/g, '').replace(/DMH/i, 'DMH').replace(/DMH(\d{6})/i, 'DMH-$1').toUpperCase();
+      referenceCode = (refMatch[1] || refMatch[0]).toString().trim();
+      referenceCode = referenceCode.replace(/[,;:.!?]+$/, '').toUpperCase();
+      referenceCode = referenceCode.replace(/DMH(\d{5,7})/i, 'DMH-$1');
     }
 
     if (referenceCode && referenceCode.startsWith('DMH') && !referenceCode.startsWith('DMH-')) {
