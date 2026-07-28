@@ -176,6 +176,7 @@ export const AdminDashboard: React.FC = () => {
   const [showSmsSimulator, setShowSmsSimulator] = useState(false);
   const [simTxnId, setSimTxnId] = useState('');
   const [simAmount, setSimAmount] = useState('');
+  const [simReferenceCode, setSimReferenceCode] = useState('');
   const [simNetwork, setSimNetwork] = useState<'MTN' | 'Telecel' | 'AirtelTigo'>('MTN');
   const [simRawSms, setSimRawSms] = useState('');
 
@@ -722,13 +723,16 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <span className="font-black text-sm uppercase">{p.name}</span>
                   <button
-                    onClick={() => updatePackage(p.id, { status: p.status === 'hidden' ? 'online' : 'hidden' })}
+                    onClick={() => {
+                      const nextStatus = p.status === 'online' ? 'offline' : p.status === 'offline' ? 'hidden' : 'online';
+                      updatePackage(p.id, { status: nextStatus });
+                    }}
                     className={`text-[10px] font-black px-2.5 py-1 rounded flex items-center space-x-1 uppercase tracking-wider ${
-                      p.status === 'hidden' ? 'bg-rose-500/20 text-rose-500' : 'bg-emerald-500/20 text-emerald-500'
+                      p.status === 'hidden' ? 'bg-rose-500/20 text-rose-500' : p.status === 'offline' ? 'bg-amber-500/20 text-amber-500' : 'bg-emerald-500/20 text-emerald-500'
                     }`}
                   >
-                    {p.status === 'hidden' ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    <span>{p.status === 'hidden' ? 'HIDDEN' : 'VISIBLE'}</span>
+                    {p.status === 'hidden' ? <EyeOff className="w-3 h-3" /> : p.status === 'offline' ? <Zap className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{p.status.toUpperCase()}</span>
                   </button>
                 </div>
                 <p className="text-xs font-mono font-black text-slate-900 dark:text-white">₵ {p.price.toFixed(2)}</p>
@@ -1097,17 +1101,16 @@ export const AdminDashboard: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Telecom Network</label>
-                    <select
-                      value={simNetwork}
-                      onChange={e => setSimNetwork(e.target.value as any)}
+                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Reference Code</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. DMH-123456"
+                      value={simReferenceCode}
+                      onChange={e => setSimReferenceCode(e.target.value)}
                       className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="MTN">MTN Ghana</option>
-                      <option value="Telecel">Telecel Cash</option>
-                      <option value="AirtelTigo">AirtelTigo Money</option>
-                    </select>
+                    />
                   </div>
+                  <div>
                 </div>
 
                 <div>
@@ -1137,6 +1140,7 @@ export const AdminDashboard: React.FC = () => {
                       const res = processSmsWebhook({
                         momoTxnId: simTxnId,
                         amount: Number(simAmount) || undefined,
+                        referenceCode: simReferenceCode || undefined,
                         network: simNetwork,
                         rawSms: simRawSms,
                         senderPhone: '0241234567',
