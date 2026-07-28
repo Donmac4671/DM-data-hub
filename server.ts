@@ -49,6 +49,64 @@ const serverWebhooks: ServerSmsWebhook[] = [
   }
 ];
 
+function normalizeReferenceCode(value: string | null): string | null {
+  if (!value) return null;
+  let cleaned = value.toString().trim().toUpperCase();
+  cleaned = cleaned.replace(/[\s,;:.!?]+/g, '');
+  const dmhMatch = cleaned.match(/DMH[- ]?\d{5,7}/i);
+  if (dmhMatch) {
+    let code = dmhMatch[0].toUpperCase().replace(/\s+/g, '');
+    if (!code.includes('-')) {
+      code = code.replace(/^DMH/, 'DMH-');
+    }
+    return code;
+  }
+  return cleaned || null;
+}
+
+function extractReferenceCode(rawSms: string): string | null {
+  const dmhMatch = rawSms.match(/DMH[- ]?\d{5,7}/i);
+  if (dmhMatch) {
+    return normalizeReferenceCode(dmhMatch[0]);
+  }
+
+  const refSection = rawSms.match(/Reference[:\s]+([^\n\r]+)/i);
+  if (!refSection) return null;
+
+  const candidate = refSection[1].trim();
+  const dmhs = candidate.match(/DMH[- ]?\d{5,7}/i);
+  if (dmhs) {
+    return normalizeReferenceCode(dmhs[0]);
+  }
+
+  const tokens = candidate
+    .split(/[\s,;]+/)
+    .map((token) => token.trim().replace(/[.,;:!?]+$/, ''))
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    if (/^DMH[- ]?\d{5,7}$/i.test(token)) {
+      return normalizeReferenceCode(token);
+    }
+  }
+
+  return null;
+}
+
+function extractTransactionId(rawSms: string): string | null {
+  const explicit = rawSms.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|TransactionID|TRANSACTION ID)[:\s]*([0-9]{8,16})/i);
+  if (explicit) {
+    return explicit[1];
+  }
+
+  const allIds = [...rawSms.matchAll(/\b([0-9]{8,16})\b/g)].map((m) => m[1]);
+  if (allIds.length > 0) {
+    return allIds[allIds.length - 1];
+  }
+
+  return null;
+}
+
 function extractWebhookData(body: any): {
   momoTxnId: string | null;
   amount: number | null;
@@ -101,25 +159,21 @@ function extractWebhookData(body: any): {
   let referenceCode: string | null = (typeof body === 'object' && (body.reference || body.refCode)) || null;
 
   if (rawSms) {
-    // Extract Transaction ID (11 digits)
     if (!momoTxnId) {
-      const txnMatch = rawSms.match(/\b(\d{11})\b/) || rawSms.match(/\b(\d{8,16})\b/);
-      if (txnMatch) {
-        momoTxnId = txnMatch[1];
+      momoTxnId = extractTransactionId(rawSms);
+      if (momoTxnId) {
         console.log('✅ Extracted Transaction ID:', momoTxnId);
       }
     }
 
-    // Extract Amount
     if (!amount || isNaN(amount)) {
-      const amountMatch = rawSms.match(/GHS\s*([0-9.]+)/i);
+      const amountMatch = rawSms.match(/GHS\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
       if (amountMatch) {
         amount = parseFloat(amountMatch[1]);
         console.log('💰 Extracted Amount:', amount);
       }
     }
 
-    // Extract Network
     if (!network) {
       const smsLower = rawSms.toLowerCase();
       if (smsLower.includes('telecel') || smsLower.includes('vodafone')) {
@@ -131,39 +185,10 @@ function extractWebhookData(body: any): {
       }
     }
 
-    // Extract Reference Code
     if (!referenceCode) {
-      console.log('🔍 Looking for reference code in:', rawSms);
-      
-      // Try DMH-XXXXXX pattern
-      const dmhMatch = rawSms.match(/DMH-\d{6}/i);
-      if (dmhMatch) {
-        referenceCode = dmhMatch[0].toUpperCase();
+      referenceCode = extractReferenceCode(rawSms);
+      if (referenceCode) {
         console.log('📌 Extracted Reference Code:', referenceCode);
-      }
-      
-      // Try DMH without dash
-      if (!referenceCode) {
-        const dmhNoDash = rawSms.match(/DMH\d{6}/i);
-        if (dmhNoDash) {
-          let code = dmhNoDash[0].toUpperCase();
-          code = code.substring(0, 3) + '-' + code.substring(3);
-          referenceCode = code;
-          console.log('📌 Extracted Reference Code (no dash):', referenceCode);
-        }
-      }
-      
-      // Try "Reference: CODE" pattern
-      if (!referenceCode) {
-        const refMatch = rawSms.match(/Reference[:\s]+([A-Za-z0-9_-]+)/i);
-        if (refMatch) {
-          let code = refMatch[1].trim();
-          code = code.replace(/[,;.:!?]$/, '');
-          if (code.length >= 4) {
-            referenceCode = code.toUpperCase();
-            console.log('📌 Extracted from "Reference:" pattern:', referenceCode);
-          }
-        }
       }
     }
   }
