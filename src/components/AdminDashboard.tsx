@@ -1272,109 +1272,106 @@ useEffect(() => {
         </table>
       </div>
     </div>
+
+    {/* Verified MoMo Claims Submissions Table */}
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm space-y-0">
+      <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div>
+          <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
+            <span>Verified MoMo Txn ID Submissions ({claims.length})</span>
+            {claims.filter(c => c.status === 'pending').length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-500 text-black">
+                {claims.filter(c => c.status === 'pending').length} Pending
+              </span>
+            )}
+          </h4>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            Customer-submitted transaction claims. Auto-credited when matched with incoming SMS webhooks.
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <th className="p-4">Txn ID</th>
+              <th className="p-4">Customer</th>
+              <th className="p-4">Amount</th>
+              <th className="p-4">Network</th>
+              <th className="p-4">MoMo Number</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Date</th>
+              <th className="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
+            {claims.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="p-8 text-center text-slate-500 dark:text-slate-400">
+                  No payment claims submitted yet.
+                </td>
+              </tr>
+            ) : (
+              claims.map(claim => (
+                <tr key={claim.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <td className="p-4 font-mono font-bold text-amber-500">
+                    {claim.momoTxnId}
+                  </td>
+                  <td className="p-4">
+                    <div className="font-bold text-slate-900 dark:text-white">{claim.userName}</div>
+                    <div className="text-[10px] text-slate-500 font-mono">{claim.userEmail}</div>
+                  </td>
+                  <td className="p-4 font-black font-mono text-slate-900 dark:text-white">
+                    GHS {claim.amount.toFixed(2)}
+                  </td>
+                  <td className="p-4 uppercase font-bold text-[10px] text-slate-600 dark:text-slate-300">
+                    {claim.momoNetwork}
+                  </td>
+                  <td className="p-4 font-mono text-slate-600 dark:text-slate-300">
+                    {claim.momoNumber}
+                  </td>
+                  <td className="p-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                      (claim.status === 'approved' || claim.status === 'claimed')
+                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                        : claim.status === 'rejected'
+                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
+                    }`}>
+                      {claim.status === 'approved' ? 'claimed' : claim.status}
+                    </span>
+                  </td>
+                  <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                    {new Date(claim.createdAt).toLocaleString()}
+                  </td>
+                  <td className="p-4 text-right space-x-1">
+                    {claim.status === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => processClaim(claim.id, 'claimed', 'Manually verified by admin')}
+                          className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
+                        >
+                          Claim & Credit
+                        </button>
+                        <button
+                          onClick={() => processClaim(claim.id, 'rejected', 'Invalid transaction details')}
+                          className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 )}
-
-          {/* Verified MoMo Claims Submissions Table (Merged from Verified ID Tab) */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm space-y-0 mt-6">
-            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>Verified MoMo Txn ID Submissions ({claims.length})</span>
-                  {claims.filter(c => c.status === 'pending').length > 0 && (
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-500 text-black">
-                      {claims.filter(c => c.status === 'pending').length} Pending
-                    </span>
-                  )}
-                </h4>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  Customer-submitted transaction claims. Auto-credited when matched with incoming SMS webhooks.
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    <th className="p-4">Txn ID</th>
-                    <th className="p-4">Customer</th>
-                    <th className="p-4">Amount</th>
-                    <th className="p-4">Network</th>
-                    <th className="p-4">MoMo Number</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4">Date</th>
-                    <th className="p-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
-                  {claims.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-500 dark:text-slate-400">
-                        No payment claims submitted yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    claims.map(claim => (
-                      <tr key={claim.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="p-4 font-mono font-bold text-amber-500">
-                          {claim.momoTxnId}
-                        </td>
-                        <td className="p-4">
-                          <div className="font-bold text-slate-900 dark:text-white">{claim.userName}</div>
-                          <div className="text-[10px] text-slate-500 font-mono">{claim.userEmail}</div>
-                        </td>
-                        <td className="p-4 font-black font-mono text-slate-900 dark:text-white">
-                          GHS {claim.amount.toFixed(2)}
-                        </td>
-                        <td className="p-4 uppercase font-bold text-[10px] text-slate-600 dark:text-slate-300">
-                          {claim.momoNetwork}
-                        </td>
-                        <td className="p-4 font-mono text-slate-600 dark:text-slate-300">
-                          {claim.momoNumber}
-                        </td>
-                        <td className="p-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            (claim.status === 'approved' || claim.status === 'claimed')
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
-                              : claim.status === 'rejected'
-                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
-                          }`}>
-                            {claim.status === 'approved' ? 'claimed' : claim.status}
-                          </span>
-                        </td>
-                        <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                          {new Date(claim.createdAt).toLocaleString()}
-                        </td>
-                        <td className="p-4 text-right space-x-1">
-                          {claim.status === 'pending' && (
-                            <>
-                              <button
-                                onClick={() => processClaim(claim.id, 'claimed', 'Manually verified by admin')}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
-                              >
-                                Claim & Credit
-                              </button>
-                              <button
-                                onClick={() => processClaim(claim.id, 'rejected', 'Invalid transaction details')}
-                                className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] uppercase rounded-lg shadow-sm"
-                              >
-                                Reject
-                              </button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Credit / Debit User Modal */}
       {showCreditModal && selectedUserForCredit && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
