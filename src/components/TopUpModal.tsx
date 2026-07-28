@@ -114,21 +114,57 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const handleGenerateRef = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // In TopUpModal.tsx
+const handleGenerateRef = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  if (!user) {
+    setError('Please log in');
+    return;
+  }
+
+  setIsGenerating(true);
+  setError(null);
+
+  try {
+    // Generate a reference code
+    const referenceCode = `DMH-${Math.floor(100000 + Math.random() * 900000)}`;
     
-    if (!user) {
-      setError('Please log in to top up your wallet');
-      return;
+    // Store in pending_topups with user info
+    const { data, error } = await supabase
+      .from('pending_topups')
+      .insert([{
+        reference_code: referenceCode,
+        amount: amountInput,
+        user_id: user.id,
+        user_email: user.email,
+        user_name: user.fullName,
+        momo_number_to_pay: '0549358359',
+        status: 'pending',
+        expires_at: new Date(Date.now() + 120 * 60000).toISOString(),
+        created_at: new Date().toISOString()
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
     }
 
-    if (amountInput < 1) {
-      setError('Please enter a valid amount (minimum GHS 1.00)');
-      return;
-    }
-
-    setIsGenerating(true);
-    setError(null);
+    console.log('✅ Pending top-up created:', data);
+    setPendingReq({
+      referenceCode,
+      amount: amountInput,
+      // ... other fields
+    });
+    setActiveStep('instructions');
+  } catch (err: any) {
+    console.error('❌ Error:', err);
+    setError(err.message);
+  } finally {
+    setIsGenerating(false);
+  }
+};
 
     try {
       const req = generateTopUpReference(amountInput, momoNumberInput);
