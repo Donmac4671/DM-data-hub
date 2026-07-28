@@ -106,7 +106,7 @@ interface AppContextType {
   webhookLogs: SmsWebhookPayload[];
   processSmsWebhook: (payload: { senderPhone?: string; network?: 'MTN' | 'Telecel' | 'AirtelTigo'; amount?: number; momoTxnId?: string; referenceCode?: string; rawSms?: string }) => { success: boolean; message: string; webhook?: SmsWebhookPayload };
   deleteSmsWebhook: (webhookId: string) => void;
-  claimPaymentWithTxnId: (momoTxnId: string) => { success: boolean; message: string; amount?: number };
+  claimPaymentWithTxnId: (momoTxnId: string, expectedAmount?: number) => { success: boolean; message: string; amount?: number };
   
   // Claims
   claims: PaymentClaim[];
@@ -630,9 +630,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [packages]);
 
   const toggleNetworkStatus = (networkId: NetworkId, online: boolean, notice?: string) => {
-    setNetworks(prev =>
-      prev.map(n => (n.id === networkId ? { ...n, online, noticeMessage: notice ?? n.noticeMessage } : n))
-    );
+    setNetworks(prev => {
+      const next = prev.map(n => (n.id === networkId ? { ...n, online, noticeMessage: notice ?? n.noticeMessage } : n));
+      localStorage.setItem('dmh_networks', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
     addAuditLog(`TOGGLE_NETWORK_${networkId.toUpperCase()}`, `Changed online status to ${online}. Notice: ${notice || 'None'}`);
     showToast(`Network ${networkId.toUpperCase()} Updated`, online ? 'Marked as ONLINE' : 'Marked as OFFLINE', online ? 'success' : 'error');
   };
@@ -642,12 +645,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...pkg,
       id: `pkg-${Date.now()}`,
     };
-    setPackages(prev => [...prev, newPkg]);
-    if (isSupabaseConfigured) {
-      upsertPackageInSupabase(newPkg);
-    }
-    localStorage.setItem('dmh_packages', JSON.stringify([...packages, newPkg]));
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    setPackages(prev => {
+      const next = [...prev, newPkg];
+      if (isSupabaseConfigured) {
+        upsertPackageInSupabase(newPkg);
+      }
+      localStorage.setItem('dmh_packages', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
     addAuditLog('ADD_PACKAGE', `Added new package: ${newPkg.name} - GHS ${newPkg.price}`);
     showToast('Package Created', `${newPkg.name} added successfully.`, 'success');
   };
@@ -673,13 +679,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deletePackage = (id: string) => {
-    const filtered = packages.filter(p => p.id !== id);
-    setPackages(filtered);
-    if (isSupabaseConfigured) {
-      deletePackageFromSupabase(id);
-    }
-    localStorage.setItem('dmh_packages', JSON.stringify(filtered));
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    setPackages(prev => {
+      const next = prev.filter(p => p.id !== id);
+      if (isSupabaseConfigured) {
+        deletePackageFromSupabase(id);
+      }
+      localStorage.setItem('dmh_packages', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
     addAuditLog('DELETE_PACKAGE', `Deleted package ID: ${id}`);
     showToast('Package Deleted', 'Package removed from catalog.', 'info');
   };
@@ -1150,7 +1158,7 @@ useEffect(() => {
     return { success: true, message: 'SMS webhook processed successfully.', webhook: newWebhook };
   };
 
-  const claimPaymentWithTxnId = (momoTxnId: string): { success: boolean; message: string; amount?: number } => {
+  const claimPaymentWithTxnId = (momoTxnId: string, expectedAmount?: number): { success: boolean; message: string; amount?: number } => {
     if (!currentUser) {
       return { success: false, message: 'Please log in to claim payment.' };
     }
@@ -1166,6 +1174,14 @@ useEffect(() => {
 
     if (matchingWebhook) {
       const creditAmount = matchingWebhook.amount;
+      if (expectedAmount !== undefined && Math.abs(expectedAmount - creditAmount) > 0.01) {
+        return {
+          success: false,
+          message: `Transaction found, but the amount entered (GHS ${expectedAmount.toFixed(2)}) does not match the registered payment amount (GHS ${creditAmount.toFixed(2)}).`,
+          amount: creditAmount,
+        };
+      }
+
       const newBal = Number((currentUser.walletBalance + creditAmount).toFixed(2));
       const claimedName = `${currentUser.fullName} (${currentUser.email})`;
 
@@ -1671,6 +1687,7 @@ useEffect(() => {
     }
 
     setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    addAuditLog('CREATE_COMPLAINT', `Complaint created by ${currentUser.email}: ${subject}`);
     showToast('Complaint Submitted', 'Our support team will respond shortly.', 'success');
   };
 
@@ -1706,6 +1723,7 @@ useEffect(() => {
     }
 
     setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    addAuditLog('REPLY_COMPLAINT', `Reply posted to complaint ${complaintId} by ${activeRole}`);
     showToast('Reply Sent', 'Your message has been posted.', 'info');
   };
 
@@ -1729,6 +1747,7 @@ useEffect(() => {
     }
 
     setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    addAuditLog('UPDATE_COMPLAINT_STATUS', `Complaint ${complaintId} status changed to ${status}`);
     showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
   };
 
@@ -1744,6 +1763,7 @@ useEffect(() => {
     }
 
     setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    addAuditLog('DELETE_COMPLAINT', `Complaint ${complaintId} deleted by ${currentUser?.email || 'unknown'}`);
     showToast('Complaint Deleted', 'Support ticket removed.', 'info');
   };
 
