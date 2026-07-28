@@ -105,9 +105,10 @@ interface AppContextType {
   // SMS Webhook Simulator & Auto-Crediting
   webhookLogs: SmsWebhookPayload[];
   processSmsWebhook: (payload: { senderPhone?: string; network?: 'MTN' | 'Telecel' | 'AirtelTigo'; amount?: number; momoTxnId?: string; referenceCode?: string; rawSms?: string }) => { success: boolean; message: string; webhook?: SmsWebhookPayload };
+  refreshWebhookLogs: () => Promise<void>;
   deleteSmsWebhook: (webhookId: string) => void;
   claimPaymentWithTxnId: (momoTxnId: string, expectedAmount?: number) => { success: boolean; message: string; amount?: number };
-  
+
   // Claims
   claims: PaymentClaim[];
   submitPaymentClaim: (claim: { referenceCode?: string; momoTxnId: string; amount: number; momoNumber: string; screenshotUrl?: string }) => void;
@@ -1073,6 +1074,47 @@ useEffect(() => {
     localStorage.setItem('dmh_webhooks', JSON.stringify(webhookLogs));
   }, [webhookLogs]);
 
+  const refreshWebhookLogs = async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const spWhs = await fetchWebhooksFromSupabase();
+      setWebhookLogs(prev => {
+        const map = new Map<string, SmsWebhookPayload>();
+        prev.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+        spWhs.forEach(w => map.set(w.momoTxnId.toUpperCase(), w));
+        const merged = Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        localStorage.setItem('dmh_webhooks', JSON.stringify(merged));
+        return merged;
+      });
+    } catch (err) {
+      console.error('Error refreshing webhook logs from Supabase:', err);
+    }
+  };
+
+  const refreshCurrentUserProfile = async () => {
+    if (!isSupabaseConfigured || !currentUser) return;
+    try {
+      const cleanedEmail = currentUser.email.toLowerCase().trim();
+      const users = await fetchUsersFromSupabase();
+      const latest = users.find(u => u.email.toLowerCase() === cleanedEmail);
+      if (latest) {
+        setUsersList(prev => prev.map(u => u.email.toLowerCase() === cleanedEmail ? latest : u));
+        setCurrentUser(latest);
+      }
+    } catch (err) {
+      console.error('Error refreshing current user profile:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const intervalId = window.setInterval(() => {
+      refreshWebhookLogs();
+      refreshCurrentUserProfile();
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [isSupabaseConfigured, currentUser]);
+
   const deleteSmsWebhook = (webhookId: string) => {
     const found = webhookLogs.find(w => w.id === webhookId);
     setWebhookLogs(prev => prev.filter(w => w.id !== webhookId));
@@ -1916,6 +1958,8 @@ useEffect(() => {
         generateTopUpReference,
         webhookLogs,
         processSmsWebhook,
+        refreshWebhookLogs,
+        refreshCurrentUserProfile,
         deleteSmsWebhook,
         claimPaymentWithTxnId,
         claims,
