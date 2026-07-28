@@ -77,6 +77,21 @@ export const AdminDashboard: React.FC = () => {
     'analytics' | 'orders' | 'claims' | 'packages' | 'networks' | 'users' | 'webhooks' | 'announcements' | 'complaints' | 'audit'
   >(() => (localStorage.getItem('dmh_admin_tab') as any) || 'analytics');
 
+  // Add this after the activeAdminTab state
+useEffect(() => {
+  if (activeAdminTab === 'webhooks') {
+    // Refresh webhook logs every 5 seconds when on webhooks tab
+    const interval = setInterval(() => {
+      refreshWebhookLogs();
+    }, 5000);
+
+    // Also refresh immediately when tab is opened
+    refreshWebhookLogs();
+
+    return () => clearInterval(interval);
+  }
+}, [activeAdminTab, refreshWebhookLogs]);
+
   useEffect(() => {
     localStorage.setItem('dmh_admin_tab', activeAdminTab);
   }, [activeAdminTab]);
@@ -969,281 +984,298 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* TAB 9: SMS WEBHOOKS & AUTO-CREDITING */}
-      {activeAdminTab === 'webhooks' && (
-        <div className="space-y-6">
-          {/* Header & SMS Forwarder Integration Bar */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                    Live Webhook Engine
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    SMS Forwarder Ready
-                  </span>
-                </div>
-                <h3 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-wider mt-1">
-                  SMS Payment Webhooks & Auto-Crediting Logs
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Real-time table displaying incoming payment webhooks forwarded from SMS apps (MTN MoMo, Telecel Cash, AT Money).
-                </p>
-              </div>
+{activeAdminTab === 'webhooks' && (
+  <div className="space-y-6">
+    {/* Header & SMS Forwarder Integration Bar */}
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+        <div>
+          <div className="flex items-center space-x-2">
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Live Webhook Engine
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">
+              SMS Forwarder Ready
+            </span>
+          </div>
+          <h3 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-wider mt-1">
+            SMS Payment Webhooks & Auto-Crediting Logs
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+              Real-time table displaying incoming payment webhooks forwarded from SMS apps (MTN MoMo, Telecel Cash, AT Money).
+          </p>
+        </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => setShowSmsSimulator(!showSmsSimulator)}
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center space-x-2 self-start md:self-auto shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Simulate Inbound SMS</span>
-                </button>
-                <button
-                  onClick={() => {
-                    refreshWebhookLogs();
-                    showToast('Webhook Logs Refreshed', 'Fetching latest webhook status from Supabase.', 'success');
-                  }}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-slate-800/20 transition-all flex items-center space-x-2 self-start md:self-auto shrink-0"
-                >
-                  <RefreshCcw className="w-4 h-4" />
-                  <span>Refresh Logs</span>
-                </button>
-              </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setShowSmsSimulator(!showSmsSimulator)}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center space-x-2 self-start md:self-auto shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Simulate Inbound SMS</span>
+          </button>
+          <button
+            onClick={() => {
+              refreshWebhookLogs();
+              showToast('Webhook Logs Refreshed', 'Fetching latest webhook status from Supabase.', 'success');
+            }}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-slate-800/20 transition-all flex items-center space-x-2 self-start md:self-auto shrink-0"
+          >
+            <RefreshCcw className="w-4 h-4" />
+            <span>Refresh Logs</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Webhook URL Endpoint Box */}
+      <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-2">
+            <span>📱 SMS Forwarder Endpoint URLs:</span>
+          </span>
+          <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+            HTTP POST / GET Supported
+          </span>
+        </div>
+
+        {/* Endpoint 1: App Instance URL */}
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold uppercase text-slate-400">Current App Environment URL:</div>
+          <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto">
+            <span className="truncate select-all">{window.location.origin}/api/webhook/sms</span>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/api/webhook/sms`);
+                showToast('App Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
+              }}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
+            >
+              Copy App URL
+            </button>
+          </div>
+        </div>
+
+        {/* Endpoint 2: Vercel Production URL */}
+        <div className="space-y-1">
+          <div className="text-[10px] font-bold uppercase text-slate-400">Vercel Production Domain Endpoint:</div>
+          <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300 overflow-x-auto">
+            <span className="truncate select-all">https://dm-data-hub.vercel.app/api/webhook/sms</span>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText('https://dm-data-hub.vercel.app/api/webhook/sms');
+                showToast('Vercel Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
+              }}
+              className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
+            >
+              Copy Vercel URL
+            </button>
+          </div>
+        </div>
+
+        <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] text-slate-300 space-y-1 font-sans">
+          <div className="font-bold text-amber-400">💡 SMS Forwarder App Setup Instructions:</div>
+          <ul className="list-disc list-inside space-y-0.5 text-slate-400 text-[11px]">
+            <li>In your Android SMS Forwarder app, set Target / Destination to <strong className="text-white">Webhook / URL</strong>.</li>
+            <li>Paste the URL above (<code className="text-amber-300">/api/webhook/sms</code>).</li>
+            <li>Set Method to <strong className="text-white">POST</strong> or <strong className="text-white">GET</strong>.</li>
+            <li>Ensure payload field includes <code className="text-amber-300">text</code>, <code className="text-amber-300">message</code>, or <code className="text-amber-300">body</code> containing the raw Mobile Money SMS.</li>
+            <li>Automatically extracts MTN, Telecel, and AirtelTigo payment receipts and top-ups!</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Inbound SMS Simulator Form */}
+      {showSmsSimulator && (
+        <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-3 animate-in fade-in duration-150">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-black uppercase text-amber-400 tracking-wider">
+              Test Inbound SMS Forwarder Payload
+            </h4>
+            <span className="text-[10px] text-slate-400 font-mono">Simulates Android SMS Forwarder / Tasker Webhook</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MoMo Txn ID</label>
+              <input
+                type="text"
+                placeholder="e.g. 30192849182"
+                value={simTxnId}
+                onChange={e => setSimTxnId(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+              />
             </div>
-
-            {/* Webhook URL Endpoint Box */}
-            <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase tracking-wider text-amber-400 flex items-center gap-2">
-                  <span>📱 SMS Forwarder Endpoint URLs:</span>
-                </span>
-                <span className="text-[10px] text-emerald-400 font-mono font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                  HTTP POST / GET Supported
-                </span>
-              </div>
-
-              {/* Endpoint 1: App Instance URL */}
-              <div className="space-y-1">
-                <div className="text-[10px] font-bold uppercase text-slate-400">Current App Environment URL:</div>
-                <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto">
-                  <span className="truncate select-all">{window.location.origin}/api/webhook/sms</span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/api/webhook/sms`);
-                      showToast('App Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
-                    }}
-                    className="px-3 py-1 bg-amber-500 hover:bg-amber-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
-                  >
-                    Copy App URL
-                  </button>
-                </div>
-              </div>
-
-              {/* Endpoint 2: Vercel Production URL */}
-              <div className="space-y-1">
-                <div className="text-[10px] font-bold uppercase text-slate-400">Vercel Production Domain Endpoint:</div>
-                <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300 overflow-x-auto">
-                  <span className="truncate select-all">https://dm-data-hub.vercel.app/api/webhook/sms</span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText('https://dm-data-hub.vercel.app/api/webhook/sms');
-                      showToast('Vercel Webhook URL Copied!', 'Paste into SMS Forwarder app.', 'success');
-                    }}
-                    className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-[10px] uppercase rounded-lg shrink-0 transition-transform active:scale-95"
-                  >
-                    Copy Vercel URL
-                  </button>
-                </div>
-              </div>
-
-              <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] text-slate-300 space-y-1 font-sans">
-                <div className="font-bold text-amber-400">💡 SMS Forwarder App Setup Instructions:</div>
-                <ul className="list-disc list-inside space-y-0.5 text-slate-400 text-[11px]">
-                  <li>In your Android SMS Forwarder app, set Target / Destination to <strong className="text-white">Webhook / URL</strong>.</li>
-                  <li>Paste the URL above (<code className="text-amber-300">/api/webhook/sms</code>).</li>
-                  <li>Set Method to <strong className="text-white">POST</strong> or <strong className="text-white">GET</strong>.</li>
-                  <li>Ensure payload field includes <code className="text-amber-300">text</code>, <code className="text-amber-300">message</code>, or <code className="text-amber-300">body</code> containing the raw Mobile Money SMS.</li>
-                  <li>Automatically extracts MTN, Telecel, and AirtelTigo payment receipts and top-ups!</li>
-                </ul>
-              </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Amount (GHS)</label>
+              <input
+                type="number"
+                placeholder="e.g. 50.00"
+                value={simAmount}
+                onChange={e => setSimAmount(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+              />
             </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Network</label>
+              <select
+                value={simNetwork}
+                onChange={e => setSimNetwork(e.target.value as any)}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+              >
+                <option value="MTN">MTN</option>
+                <option value="Telecel">Telecel</option>
+                <option value="AirtelTigo">AirtelTigo</option>
+              </select>
+            </div>
+          </div>
 
-            {/* Inbound SMS Simulator Form */}
-            {showSmsSimulator && (
-              <div className="p-4 bg-slate-950 text-slate-100 rounded-2xl border border-slate-800 space-y-3 animate-in fade-in duration-150">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black uppercase text-amber-400 tracking-wider">
-                    Test Inbound SMS Forwarder Payload
-                  </h4>
-                  <span className="text-[10px] text-slate-400 font-mono">Simulates Android SMS Forwarder / Tasker Webhook</span>
-                </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Reference Code</label>
+            <input
+              type="text"
+              placeholder="e.g. DMH-123456"
+              value={simReferenceCode}
+              onChange={e => setSimReferenceCode(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+            />
+          </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MoMo Txn ID</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 30192849182"
-                      value={simTxnId}
-                      onChange={e => setSimTxnId(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Amount (GHS)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 50.00"
-                      value={simAmount}
-                      onChange={e => setSimAmount(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Reference Code</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. DMH-123456"
-                      value={simReferenceCode}
-                      onChange={e => setSimReferenceCode(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-                </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Raw SMS Message Text (Optional - Parser Auto-extracts)</label>
+            <textarea
+              rows={2}
+              placeholder="e.g. Payment received for GHS 50.00 from 0241234567. Financial Transaction Id: 30192849182."
+              value={simRawSms}
+              onChange={e => setSimRawSms(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
+            />
+          </div>
 
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Raw SMS Message Text (Optional - Parser Auto-extracts)</label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Payment received for GHS 50.00 from 0241234567. Financial Transaction Id: 30192849182."
-                    value={simRawSms}
-                    onChange={e => setSimRawSms(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs font-mono text-white focus:outline-none focus:border-amber-500"
-                  />
-                </div>
+          <div className="flex justify-end space-x-2 pt-1">
+            <button
+              onClick={() => setShowSmsSimulator(false)}
+              className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (!simTxnId && !simRawSms) {
+                  showToast('Missing Fields', 'Provide a MoMo Transaction ID or raw SMS text.', 'error');
+                  return;
+                }
+                const res = processSmsWebhook({
+                  momoTxnId: simTxnId,
+                  amount: Number(simAmount) || undefined,
+                  referenceCode: simReferenceCode || undefined,
+                  network: simNetwork,
+                  rawSms: simRawSms,
+                  senderPhone: '0241234567',
+                });
+                if (res.success) {
+                  setSimTxnId('');
+                  setSimAmount('');
+                  setSimReferenceCode('');
+                  setSimRawSms('');
+                  setShowSmsSimulator(false);
+                  refreshWebhookLogs(); // Refresh immediately after simulating
+                } else {
+                  showToast('Error', res.message, 'error');
+                }
+              }}
+              className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl"
+            >
+              Post Webhook
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
 
-                <div className="flex justify-end space-x-2 pt-1">
-                  <button
-                    onClick={() => setShowSmsSimulator(false)}
-                    className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!simTxnId && !simRawSms) {
-                        showToast('Missing Fields', 'Provide a MoMo Transaction ID or raw SMS text.', 'error');
-                        return;
-                      }
-                      const res = processSmsWebhook({
-                        momoTxnId: simTxnId,
-                        amount: Number(simAmount) || undefined,
-                        referenceCode: simReferenceCode || undefined,
-                        network: simNetwork,
-                        rawSms: simRawSms,
-                        senderPhone: '0241234567',
-                      });
-                      if (res.success) {
-                        setSimTxnId('');
-                        setSimAmount('');
-                        setSimRawSms('');
-                        setShowSmsSimulator(false);
-                      } else {
-                        showToast('Error', res.message, 'error');
-                      }
-                    }}
-                    className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-xs uppercase tracking-wider rounded-xl"
-                  >
-                    Post Webhook
-                  </button>
-                </div>
-              </div>
+    {/* Table Container */}
+    <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+      <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-white">
+          Webhooks Table ({webhookLogs.length})
+        </h4>
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+          Unclaimed wait for customer Txn ID claim or admin deletion
+        </span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <th className="p-4">Transaction ID</th>
+              <th className="p-4">Amount</th>
+              <th className="p-4">Network</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Claimed By</th>
+              <th className="p-4">Date</th>
+              <th className="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
+            {webhookLogs.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-8 text-center text-slate-500 dark:text-slate-400">
+                  No webhooks received yet. Use 'Simulate Inbound SMS' to test incoming payment webhooks.
+                </td>
+              </tr>
+            ) : (
+              webhookLogs.map((wh) => (
+                <tr key={wh.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                  <td className="p-4 font-mono font-bold text-slate-900 dark:text-amber-400">
+                    {wh.momoTxnId}
+                  </td>
+                  <td className="p-4 font-black font-mono text-slate-900 dark:text-white">
+                    GHS {wh.amount.toFixed(2)}
+                  </td>
+                  <td className="p-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                      wh.network === 'MTN'
+                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
+                        : wh.network === 'Telecel'
+                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                        : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
+                    }`}>
+                      {wh.network}
+                    </span>
+                  </td>
+                  <td className="p-4">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                      wh.status === 'claimed'
+                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
+                    }`}>
+                      {wh.status === 'claimed' ? 'Claimed' : 'Unclaimed'}
+                    </span>
+                  </td>
+                  <td className="p-4 text-slate-600 dark:text-slate-300 font-medium">
+                    {wh.claimedBy || '-'}
+                  </td>
+                  <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                    {new Date(wh.date).toLocaleString()}
+                  </td>
+                  <td className="p-4 text-right">
+                    <button
+                      onClick={() => deleteSmsWebhook(wh.id)}
+                      className="p-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                      title="Delete Webhook"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))
             )}
-          </div>
-
-          {/* Table Container */}
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <h4 className="font-black text-sm uppercase tracking-wider text-slate-900 dark:text-white">
-                Webhooks Table ({webhookLogs.length})
-              </h4>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                Unclaimed wait for customer Txn ID claim or admin deletion
-              </span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    <th className="p-4">Transaction ID</th>
-                    <th className="p-4">Amount</th>
-                    <th className="p-4">Network</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4">Claimed By</th>
-                    <th className="p-4">Date</th>
-                    <th className="p-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
-                  {webhookLogs.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-slate-500 dark:text-slate-400">
-                        No webhooks received yet. Use 'Simulate Inbound SMS' to test incoming payment webhooks.
-                      </td>
-                    </tr>
-                  ) : (
-                    webhookLogs.map(wh => (
-                      <tr key={wh.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="p-4 font-mono font-bold text-slate-900 dark:text-amber-400">
-                          {wh.momoTxnId}
-                        </td>
-                        <td className="p-4 font-black font-mono text-slate-900 dark:text-white">
-                          GHS {wh.amount.toFixed(2)}
-                        </td>
-                        <td className="p-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            wh.network === 'MTN'
-                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
-                              : wh.network === 'Telecel'
-                              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                              : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20'
-                          }`}>
-                            {wh.network}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                            wh.status === 'claimed'
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
-                          }`}>
-                            {wh.status === 'claimed' ? 'Claimed' : 'Unclaimed'}
-                          </span>
-                        </td>
-                        <td className="p-4 text-slate-600 dark:text-slate-300 font-medium">
-                          {wh.claimedBy || '-'}
-                        </td>
-                        <td className="p-4 font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                          {new Date(wh.date).toLocaleString()}
-                        </td>
-                        <td className="p-4 text-right">
-                          <button
-                            onClick={() => deleteSmsWebhook(wh.id)}
-                            className="p-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
-                            title="Delete Webhook"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+)}
 
           {/* Verified MoMo Claims Submissions Table (Merged from Verified ID Tab) */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm space-y-0 mt-6">
