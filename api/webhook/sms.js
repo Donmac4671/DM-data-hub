@@ -4,9 +4,10 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const webhookSecret = process.env.SMS_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET || '';
+const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 
 const supabase =
-  supabaseUrl && supabaseKey
+  isSupabaseConfigured
     ? createClient(supabaseUrl, supabaseKey, {
         auth: {
           autoRefreshToken: false,
@@ -16,7 +17,7 @@ const supabase =
     : null;
 
 function resolveRequestSecret(req) {
-  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'] || req.headers['x-api-key'] || req.headers['x-bot-secret'];
+  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'] || req.headers['x-api-key'] || req.headers['x-bot-secret'] || req.headers['authorization'];
   const querySecret = req.query?.secret || req.query?.token || req.query?.botSecret;
   const bodySecret = req.body?.secret || req.body?.token || req.body?.botSecret;
   return (headerSecret || querySecret || bodySecret || '').toString();
@@ -34,16 +35,31 @@ function isBotRequest(req) {
   );
 }
 
+function getUrlPathPayload(req) {
+  if (req.method !== 'GET' || !req.url) return '';
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const path = url.pathname.replace(/\/api\/webhook\/sms\/?/, '') || '';
+    return decodeURIComponent(path).trim();
+  } catch (err) {
+    return '';
+  }
+}
+
 function getWebhookPayload(req) {
   const source = req.method === 'GET' ? req.query : req.body || {};
+  const urlPathPayload = getUrlPathPayload(req);
+  const textPayload = source.text || source.message || source.sms || source.body || source.payload || source.data || source.content || source.msg || source.rawSms || urlPathPayload || source.sms_body || source.msg_body || '';
+  const rawSource = source.rawSms || source.sms || source.message || source.text || source.payload || source.data || urlPathPayload || JSON.stringify(source);
+
   return {
-    text: source.text || source.message || source.sms || source.body || source.content || source.msg || source.rawSms || source.sms_body || source.msg_body || '',
+    text: textPayload,
     momoTxnId: source.momoTxnId || source.txnId || source.transaction_id || source.transactionId || source.ref || source.reference || '',
     amount: source.amount || source.value || 0,
     network: source.network || '',
     referenceCode: source.reference || source.refCode || source.ref || source.referenceCode || '',
     senderPhone: source.from || source.sender || source.phone || source.senderPhone || source.msisdn || source.address || '',
-    rawSource: source.rawSms || source.sms || source.message || source.text || JSON.stringify(source),
+    rawSource,
   };
 }
 
