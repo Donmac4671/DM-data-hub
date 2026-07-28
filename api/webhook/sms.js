@@ -1,4 +1,5 @@
-﻿// api/webhook/sms.js
+// api/webhook/sms.js - Updated version
+
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -204,6 +205,9 @@ export default async function handler(req, res) {
     let claimedBy = '-';
     const effectiveTxnId = momoTxnId || `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`;
 
+    // Create webhook record
+    let savedWebhook = null;
+
     if (supabase) {
       if (momoTxnId) {
         const { data: existing } = await supabase
@@ -218,29 +222,31 @@ export default async function handler(req, res) {
         }
       }
 
-      const { error: webhookError } = await supabase
+      const webhookData = {
+        id: `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
+        momo_txn_id: effectiveTxnId,
+        amount: Number(amount || 0),
+        network: network || 'MTN',
+        status: 'unclaimed',
+        claimed_by: '-',
+        reference_code: referenceCode || '',
+        raw_sms: sourceText || '',
+        sender_phone: senderPhone || 'SMS Forwarder',
+        created_at: new Date().toISOString(),
+      };
+
+      const { data, error: webhookError } = await supabase
         .from('sms_webhooks')
-        .upsert([
-          {
-            id: `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
-            momo_txn_id: effectiveTxnId,
-            amount: Number(amount || 0),
-            network: network || 'MTN',
-            status: 'unclaimed',
-            claimed_by: '-',
-            reference_code: referenceCode || '',
-            raw_sms: sourceText || '',
-            sender_phone: senderPhone || 'SMS Forwarder',
-            created_at: new Date().toISOString(),
-          },
-        ], { onConflict: 'momo_txn_id' });
+        .upsert([webhookData], { onConflict: 'momo_txn_id' })
+        .select();
 
       if (webhookError) {
         console.error('❌ SMS webhook insert failed:', webhookError);
         throw webhookError;
       }
 
-      console.log('✅ Webhook saved to Supabase');
+      savedWebhook = data?.[0] || webhookData;
+      console.log('✅ Webhook saved to Supabase:', savedWebhook);
 
       if (referenceCode) {
         const cleanRef = referenceCode.trim().toUpperCase();
@@ -394,6 +400,29 @@ export default async function handler(req, res) {
           console.error('❌ Auto-credit error:', autoErr);
         }
       }
+    }
+
+    // Return formatted response for the dashboard
+    const responseData = {
+      success: true,
+      message: 'SMS Webhook processed successfully',
+      data: {
+        id: savedWebhook?.id || `sms-${Date.now()}`,
+        momoTxnId: momoTxnId || 'N/A',
+        amount: amount || 0,
+        network: network || 'MTN',
+        status: webhookStatus,
+        claimedBy: claimedBy,
+        referenceCode: referenceCode || '',
+        rawSms: sourceText || '',
+        senderPhone: senderPhone || 'SMS Forwarder',
+        date: new Date().toISOString(),
+      }
+    };
+
+    // Return JSON if client accepts it, otherwise plain text
+    if (req.headers.accept?.includes('application/json')) {
+      return res.status(200).json(responseData);
     }
 
     return res.status(200).send(`OK - SMS Received: Txn ID ${momoTxnId || 'N/A'}, Amount GHS ${amount || 0}, Network ${network}`);
