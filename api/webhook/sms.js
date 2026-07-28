@@ -188,16 +188,74 @@ export default async function handler(req, res) {
     else if (lower.includes('airtel') || lower.includes('tigo') || lower.includes('at money')) network = 'AirtelTigo';
     else network = 'MTN';
 
-    const refMatch = sourceText.match(/DMH[- ]?\d{5,7}/i) || sourceText.match(/Reference[:\s]+([^\s,;:.!?]+)/i);
-    if (refMatch) {
-      referenceCode = (refMatch[1] || refMatch[0]).toString().trim();
-      referenceCode = referenceCode.replace(/[,;:.!?]+$/, '').toUpperCase();
-      referenceCode = referenceCode.replace(/DMH(\d{5,7})/i, 'DMH-$1');
-    }
+    // === IMPROVED REFERENCE CODE EXTRACTION ===
+let referenceCode = '';
 
-    if (referenceCode && referenceCode.startsWith('DMH') && !referenceCode.startsWith('DMH-')) {
-      referenceCode = referenceCode.replace(/^DMH/, 'DMH-');
+// FIRST: Try to find DMH-XXXXXX pattern (MTN style)
+const dmhMatch = sourceText.match(/DMH[- ]?\d{5,7}/i);
+if (dmhMatch) {
+  let code = dmhMatch[0].toString().trim().toUpperCase();
+  code = code.replace(/\s+/g, '');
+  if (!code.includes('-') && code.startsWith('DMH')) {
+    code = code.replace(/^DMH/, 'DMH-');
+  }
+  referenceCode = code;
+  console.log('📌 Extracted DMH Reference Code:', referenceCode);
+}
+
+// SECOND: Look for 6-character alphanumeric code in Telecel messages (like 344EMU)
+if (!referenceCode) {
+  // Pattern: 3 letters + 3 digits OR 3 digits + 3 letters
+  const mixedPattern = sourceText.match(/\b([A-Z]{3}\d{3}|\d{3}[A-Z]{3})\b/gi);
+  if (mixedPattern) {
+    const commonWords = ['VODAFONE', 'MTN', 'TELECEL', 'AIRTEL', 'TIGO', 'GHS', 'BALANCE', 'REFERENCE', 'TRANSACTION', 'PATIENCE', 'OPOKU'];
+    for (const match of mixedPattern) {
+      const code = match.toUpperCase();
+      if (commonWords.includes(code) || /^\d+$/.test(code)) continue;
+      referenceCode = code;
+      console.log('📌 Extracted Mixed Reference Code:', referenceCode);
+      break;
     }
+  }
+}
+
+// THIRD: Look for any 5-7 character alphanumeric code
+if (!referenceCode) {
+  const allTokens = sourceText.split(/[\s,;:.!?]+/);
+  for (const token of allTokens) {
+    const clean = token.replace(/[,;:.!?]$/, '').trim();
+    if (clean.length >= 5 && clean.length <= 7 && /[A-Z]/.test(clean) && /[0-9]/.test(clean)) {
+      const common = ['VODAFONE', 'MTN', 'TELECEL', 'AIRTEL', 'TIGO', 'GHS', 'BALANCE', 'REFERENCE', 'TRANSACTION'];
+      if (common.includes(clean.toUpperCase())) continue;
+      referenceCode = clean.toUpperCase();
+      console.log('📌 Extracted Fallback Reference Code:', referenceCode);
+      break;
+    }
+  }
+}
+
+// FOURTH: Try "Reference:" section
+if (!referenceCode) {
+  const refSection = sourceText.match(/Reference[:\s]+([^\n\r.]+)/i);
+  if (refSection) {
+    const section = refSection[1].trim();
+    const parts = section.split(/[\s,;]+/);
+    for (const part of parts) {
+      const clean = part.replace(/[,;:.!?]$/, '').trim();
+      if (clean.length >= 4 && clean.length <= 8 && /[A-Z]/.test(clean) && /[0-9]/.test(clean)) {
+        const common = ['VODAFONE', 'MTN', 'TELECEL', 'AIRTEL', 'TIGO', 'GHS', 'BALANCE'];
+        if (common.includes(clean.toUpperCase())) continue;
+        referenceCode = clean.toUpperCase();
+        console.log('📌 Extracted from Reference section:', referenceCode);
+        break;
+      }
+    }
+  }
+}
+
+if (!referenceCode) {
+  console.log('⚠️ No reference code found in SMS');
+}
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode, senderPhone });
 
