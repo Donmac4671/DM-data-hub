@@ -168,8 +168,8 @@ export default async function handler(req, res) {
       ? (req.query.from || req.query.sender || req.query.phone || req.query.senderPhone || req.query.msisdn || 'SMS Forwarder')
       : (req.body?.from || req.body?.sender || req.body?.phone || req.body?.senderPhone || req.body?.msisdn || 'SMS Forwarder');
 
-    const txnMatch = sourceText.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|Ref|Reference\s*No\.?|MTN\s*Ref)[:\s]*([0-9A-Za-z]{6,16})/i) ||
-      sourceText.match(/\b([0-9]{8,16})\b/);
+    const txnMatch = sourceText.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|MTN\s*Ref)[:\s]*([0-9A-Za-z]{8,16})/i) ||
+      sourceText.match(/\b([0-9]{11,16})\b/);
     if (txnMatch) {
       momoTxnId = txnMatch[1] || txnMatch[0];
     }
