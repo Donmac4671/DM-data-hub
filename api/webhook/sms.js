@@ -16,13 +16,22 @@ const supabase =
     : null;
 
 function resolveRequestSecret(req) {
-  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'];
+  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'] || req.headers['x-api-key'];
   const querySecret = req.query?.secret || req.query?.token;
   const bodySecret = req.body?.secret || req.body?.token;
   return (headerSecret || querySecret || bodySecret || '').toString();
 }
 
+console.log('📡 SMS webhook module loaded');
+
 export default async function handler(req, res) {
+  console.log('📨 SMS webhook request', {
+    method: req.method,
+    url: req.url,
+    query: req.query,
+    hasBody: Boolean(req.body && Object.keys(req.body).length),
+    secretProvided: Boolean(resolveRequestSecret(req)),
+  });
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Webhook-Secret, X-Secret');
@@ -51,7 +60,10 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: 'SMS webhook secret not configured' });
       }
       if (!requestSecret || requestSecret !== webhookSecret) {
-        console.warn('Unauthorized SMS webhook request.');
+        console.warn('Unauthorized SMS webhook request.', {
+          receivedSecret: requestSecret ? '[REDACTED]' : 'none',
+          expectedSecretSet: Boolean(webhookSecret),
+        });
         return res.status(401).json({ error: 'Unauthorized' });
       }
     }
@@ -101,6 +113,7 @@ export default async function handler(req, res) {
     console.log('📝 Raw SMS:', sourceText);
 
     if (!sourceText || sourceText.length === 0) {
+      console.warn('No SMS content extracted from request.');
       return res.status(200).send('OK - No SMS text found');
     }
 
