@@ -13,10 +13,19 @@ const supabase =
         }
       })
     : null;
+const webhookSecret = process.env.SMS_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET || '';
+
+function resolveRequestSecret(req) {
+  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'];
+  const querySecret = req.query?.secret || req.query?.token;
+  const bodySecret = req.body?.secret || req.body?.token;
+  return (headerSecret || querySecret || bodySecret || '').toString();
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Webhook-Secret, X-Secret');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
@@ -28,6 +37,19 @@ export default async function handler(req, res) {
       !req.query.text && !req.query.message && !req.query.sms && !req.query.body &&
       !req.query.momoTxnId && !req.query.rawSms && !req.query.msg
     );
+
+    const requestSecret = resolveRequestSecret(req);
+    const shouldAuthenticate = !isPollingRequest;
+    if (shouldAuthenticate) {
+      if (!webhookSecret) {
+        console.error('SMS webhook secret is not configured in environment.');
+        return res.status(500).json({ error: 'SMS webhook secret not configured' });
+      }
+      if (!requestSecret || requestSecret !== webhookSecret) {
+        console.warn('Unauthorized SMS webhook request.');
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
 
     if (isPollingRequest) {
       if (supabase) {
@@ -57,16 +79,24 @@ export default async function handler(req, res) {
     }
 
     // Process SMS webhook
-    let smsText = '';
-    if (req.method === 'GET') {
-      smsText = req.query.text || req.query.message || req.query.sms || req.query.body || '';
-    } else if (req.method === 'POST') {
-      smsText = req.body?.text || req.body?.message || req.body?.sms || req.body?.body || '';
-    }
+    const rawPayload = [
+      req.method === 'GET' ? req.query.text : req.body?.text,
+      req.method === 'GET' ? req.query.message : req.body?.message,
+      req.method === 'GET' ? req.query.sms : req.body?.sms,
+      req.method === 'GET' ? req.query.body : req.body?.body,
+      req.method === 'GET' ? req.query.rawSms : req.body?.rawSms,
+      req.method === 'GET' ? req.query.content : req.body?.content,
+      req.method === 'GET' ? req.query.msg : req.body?.msg,
+      req.method === 'GET' ? req.query.data : req.body?.data,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
 
-    console.log('📝 Raw SMS:', smsText);
+    const sourceText = rawPayload || JSON.stringify(req.method === 'GET' ? req.query : req.body || {});
+    console.log('📝 Raw SMS:', sourceText);
 
-    if (!smsText || smsText.length === 0) {
+    if (!sourceText || sourceText.length === 0) {
       return res.status(200).send('OK - No SMS text found');
     }
 
@@ -76,36 +106,35 @@ export default async function handler(req, res) {
     let network = 'MTN';
     let referenceCode = '';
 
-    // Extract Transaction ID
-    const txnMatch = smsText.match(/Transaction ID:\s*(\d+)/i);
+    const senderPhone = req.method === 'GET'
+      ? (req.query.from || req.query.sender || req.query.phone || req.query.senderPhone || req.query.msisdn || 'SMS Forwarder')
+      : (req.body?.from || req.body?.sender || req.body?.phone || req.body?.senderPhone || req.body?.msisdn || 'SMS Forwarder');
 
-if (txnMatch) {
-  momoTxnId = txnMatch[1];
-}
+    const txnMatch = sourceText.match(/(?:Transaction ID|Txn ID|Financial Transaction Id|Transaction Id|Ref|Reference\s*No\.?|MTN\s*Ref)[:\s]*([0-9A-Za-z]{6,16})/i) ||
+                     sourceText.match(/\b([0-9]{8,16})\b/);
+    if (txnMatch) {
+      momoTxnId = txnMatch[1] || txnMatch[0];
+    }
 
-    // Extract Amount
-    const amountMatch = smsText.match(/GHS\s*([0-9.]+)/i);
+    const amountMatch = sourceText.match(/(?:GHS|GHC|GH₵|₵)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
+                        sourceText.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i);
     if (amountMatch) amount = parseFloat(amountMatch[1]) || 0;
 
-    // Extract Reference Code
-const refMatch = smsText.match(/\bDMH-\d{6}\b/i);
-
-if (refMatch) {
-  referenceCode = refMatch[0].toUpperCase();
-} else {
-  const refMatch2 = smsText.match(/Reference:.*?,(DMH[-]?\d+)/i);
-
-  if (refMatch2) {
-    referenceCode = refMatch2[1]
-      .replace('DMH', 'DMH-')
-      .toUpperCase();
-  }
-}
-
-    const lower = smsText.toLowerCase();
+    const lower = sourceText.toLowerCase();
     if (lower.includes('telecel') || lower.includes('vodafone')) network = 'Telecel';
-    else if (lower.includes('airtel') || lower.includes('tigo')) network = 'AirtelTigo';
+    else if (lower.includes('airtel') || lower.includes('tigo') || lower.includes('at money')) network = 'AirtelTigo';
     else network = 'MTN';
+
+    const refMatch = sourceText.match(/\bDMH[- ]?\d{6}\b/i) || sourceText.match(/Reference[:\s]*([A-Za-z0-9-]{6,16})/i);
+    if (refMatch) {
+      referenceCode = (refMatch[1] || refMatch[0]).toString().replace(/\s+/g, '').replace(/DMH/i, 'DMH').replace(/DMH(\d{6})/i, 'DMH-$1').toUpperCase();
+    }
+
+    if (referenceCode && referenceCode.startsWith('DMH') && !referenceCode.startsWith('DMH-')) {
+      referenceCode = referenceCode.replace(/^DMH/, 'DMH-');
+    }
+
+    console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode, senderPhone });
 
     console.log('📊 Extracted:', { momoTxnId, amount, network, referenceCode });
     console.log('🔧 Supabase status:', {
@@ -117,39 +146,42 @@ if (refMatch) {
     // Save webhook
     let webhookStatus = 'unclaimed';
     let claimedBy = '-';
+    const effectiveTxnId = momoTxnId || `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`;
 
-    if (supabase && momoTxnId) {
-      // Check for duplicate
-      const { data: existing } = await supabase
-        .from('sms_webhooks')
-        .select('momo_txn_id')
-        .eq('momo_txn_id', momoTxnId)
-        .maybeSingle();
+    if (supabase) {
+      if (momoTxnId) {
+        // Check for duplicate by transaction ID
+        const { data: existing } = await supabase
+          .from('sms_webhooks')
+          .select('momo_txn_id')
+          .eq('momo_txn_id', momoTxnId)
+          .maybeSingle();
 
-      if (existing) {
-        console.log(`⏭️ Duplicate webhook for Txn ID: ${momoTxnId}`);
-        return res.status(200).send(`OK - Duplicate Txn ID ${momoTxnId}`);
+        if (existing) {
+          console.log(`⏭️ Duplicate webhook for Txn ID: ${momoTxnId}`);
+          return res.status(200).send(`OK - Duplicate Txn ID ${momoTxnId}`);
+        }
       }
 
       const { error: webhookError } = await supabase
-  .from('sms_webhooks')
-  .upsert(
-    [{
-      id: `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
-      momo_txn_id: momoTxnId,
-      amount: Number(amount || 0),
-      network: network || 'MTN',
-      status: 'unclaimed',
-      claimed_by: '-',
-      reference_code: referenceCode || '',
-      raw_sms: smsText || '',
-      sender_phone: 'SMS Forwarder',
-      created_at: new Date().toISOString()
-    }],
-    {
-      onConflict: 'momo_txn_id'
-    }
-  );
+        .from('sms_webhooks')
+        .upsert(
+          [{
+            id: `sms-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
+            momo_txn_id: effectiveTxnId,
+            amount: Number(amount || 0),
+            network: network || 'MTN',
+            status: 'unclaimed',
+            claimed_by: '-',
+            reference_code: referenceCode || '',
+            raw_sms: sourceText || '',
+            sender_phone: senderPhone || 'SMS Forwarder',
+            created_at: new Date().toISOString()
+          }],
+          {
+            onConflict: 'momo_txn_id'
+          }
+        );
 
 if (webhookError) {
   console.error('❌ SMS webhook insert failed:', webhookError);
