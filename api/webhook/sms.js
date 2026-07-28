@@ -16,20 +16,51 @@ const supabase =
     : null;
 
 function resolveRequestSecret(req) {
-  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'] || req.headers['x-api-key'];
-  const querySecret = req.query?.secret || req.query?.token;
-  const bodySecret = req.body?.secret || req.body?.token;
+  const headerSecret = req.headers['x-webhook-secret'] || req.headers['x-secret'] || req.headers['x-api-key'] || req.headers['x-bot-secret'];
+  const querySecret = req.query?.secret || req.query?.token || req.query?.botSecret;
+  const bodySecret = req.body?.secret || req.body?.token || req.body?.botSecret;
   return (headerSecret || querySecret || bodySecret || '').toString();
+}
+
+function isBotRequest(req) {
+  const headerBot = req.headers['x-bot'] || req.headers['x-bot-request'];
+  const queryBot = req.query?.bot || req.query?.source;
+  return Boolean(
+    headerBot === 'true' ||
+    headerBot === '1' ||
+    queryBot === 'bot' ||
+    queryBot === 'true' ||
+    queryBot === '1'
+  );
+}
+
+function getWebhookPayload(req) {
+  const source = req.method === 'GET' ? req.query : req.body || {};
+  return {
+    text: source.text || source.message || source.sms || source.body || source.content || source.msg || source.rawSms || source.sms_body || source.msg_body || '',
+    momoTxnId: source.momoTxnId || source.txnId || source.transaction_id || source.transactionId || source.ref || source.reference || '',
+    amount: source.amount || source.value || 0,
+    network: source.network || '',
+    referenceCode: source.reference || source.refCode || source.ref || source.referenceCode || '',
+    senderPhone: source.from || source.sender || source.phone || source.senderPhone || source.msisdn || source.address || '',
+    rawSource: source.rawSms || source.sms || source.message || source.text || JSON.stringify(source),
+  };
 }
 
 console.log('📡 SMS webhook module loaded');
 
 export default async function handler(req, res) {
+  const payload = getWebhookPayload(req);
+  const botRequest = isBotRequest(req);
+  const hasPayload = Boolean(payload.text || payload.momoTxnId || payload.amount || payload.referenceCode);
+
   console.log('📨 SMS webhook request', {
     method: req.method,
     url: req.url,
     query: req.query,
-    hasBody: Boolean(req.body && Object.keys(req.body).length),
+    body: req.body,
+    botRequest,
+    hasPayload,
     secretProvided: Boolean(resolveRequestSecret(req)),
   });
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -41,18 +72,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const isPollingRequest = req.method === 'GET' && (
-      !req.query.text &&
-      !req.query.message &&
-      !req.query.sms &&
-      !req.query.body &&
-      !req.query.momoTxnId &&
-      !req.query.rawSms &&
-      !req.query.msg
-    );
+    const payload = getWebhookPayload(req);
+    const botRequest = isBotRequest(req);
+    const hasPayload = Boolean(payload.text || payload.momoTxnId || payload.amount || payload.referenceCode);
+    const isPollingRequest = req.method === 'GET' && !hasPayload;
 
     const requestSecret = resolveRequestSecret(req);
-    const shouldAuthenticate = !isPollingRequest;
+    const shouldAuthenticate = !isPollingRequest && hasPayload;
 
     if (shouldAuthenticate) {
       if (!webhookSecret) {
