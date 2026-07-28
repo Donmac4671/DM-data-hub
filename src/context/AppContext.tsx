@@ -672,7 +672,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return p;
       });
       localStorage.setItem('dmh_packages', JSON.stringify(updated));
-      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      window.dispatchEvent(new Event('storage'));
       return updated;
     });
     addAuditLog('UPDATE_PACKAGE', `Updated package ID: ${id}`);
@@ -1131,30 +1131,31 @@ useEffect(() => {
     showToast('Webhook Deleted', 'Webhook record removed from system.', 'info');
   };
 
-  const processSmsWebhook = (payload: {
+  const processSmsWebhook = async (payload: {
     senderPhone?: string;
     network?: 'MTN' | 'Telecel' | 'AirtelTigo';
     amount?: number;
     momoTxnId?: string;
     referenceCode?: string;
     rawSms?: string;
-  }): { success: boolean; message: string; webhook?: SmsWebhookPayload } => {
+  }): Promise<{ success: boolean; message: string; webhook?: SmsWebhookPayload }> => {
     let momoTxnId = (payload.momoTxnId || '').trim();
     let amount = payload.amount || 0;
     let network: 'MTN' | 'Telecel' | 'AirtelTigo' = payload.network || 'MTN';
+    let referenceCode = payload.referenceCode?.trim().toUpperCase() || '';
     const rawSms = payload.rawSms || '';
 
     // Extract fields from raw SMS body if provided
     if (rawSms) {
-      const txnMatch = rawSms.match(/(?:Transaction ID|Txn ID|Transaction Id|Financial Transaction Id|Ref|ID):\s*([0-9A-Za-z]+)/i) ||
-                       rawSms.match(/(?:id|ref):\s*([0-9]{8,14})/i) ||
-                       rawSms.match(/\b([0-9]{9,12})\b/);
+      const txnMatch = rawSms.match(/(?:Transaction ID|Txn ID|Transaction Id|Financial Transaction Id|MTN\s*Ref)[:\s]*([0-9A-Za-z]{8,16})/i) ||
+                       rawSms.match(/(?:id|txn id|transaction id|txn):\s*([0-9]{8,16})/i) ||
+                       rawSms.match(/\b([0-9]{11,16})\b/);
       if (txnMatch && !momoTxnId) {
         momoTxnId = txnMatch[1];
       }
 
       const amountMatch = rawSms.match(/(?:GHS|GHC|GH₵|₵|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)/i) ||
-                          rawSms.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC)/i);
+                          rawSms.match(/([0-9]+(?:\.[0-9]{1,2})?)\s*(?:GHS|GHC|GH₵|₵)/i);
       if (amountMatch && !amount) {
         amount = parseFloat(amountMatch[1]);
       }
@@ -1166,10 +1167,21 @@ useEffect(() => {
       } else {
         network = 'MTN';
       }
+
+      if (!referenceCode) {
+        const refMatch = rawSms.match(/\bDMH[- ]?\d{6}\b/i) || rawSms.match(/Reference[:\s]*([A-Za-z0-9-]{6,16})/i);
+        if (refMatch) {
+          referenceCode = (refMatch[1] || refMatch[0]).toString().replace(/\s+/g, '').replace(/DMH/i, 'DMH').replace(/DMH(\d{6})/i, 'DMH-$1').toUpperCase();
+        }
+      }
     }
 
     if (!momoTxnId) {
       return { success: false, message: 'Could not extract valid MoMo Transaction ID from payload.' };
+    }
+
+    if (referenceCode && referenceCode.startsWith('DMH') && !referenceCode.startsWith('DMH-')) {
+      referenceCode = referenceCode.replace(/^DMH/, 'DMH-');
     }
 
     // Check duplicate
@@ -1188,16 +1200,54 @@ useEffect(() => {
       date: new Date().toISOString(),
       rawSms,
       senderPhone: payload.senderPhone || 'SMS Forwarder',
+      referenceCode,
     };
 
     setWebhookLogs(prev => [newWebhook, ...prev]);
+
     if (isSupabaseConfigured) {
       insertWebhookInSupabase(newWebhook);
     }
-    addAuditLog('SMS_WEBHOOK_RECEIVED', `Logged unclaimed SMS webhook for Txn ID: ${momoTxnId}, GHS ${amount}, Network: ${network}`);
-    showToast('SMS Webhook Logged', `Recorded Txn ID ${momoTxnId} (GHS ${amount.toFixed(2)}) as Unclaimed.`, 'success');
 
-    return { success: true, message: 'SMS webhook processed successfully.', webhook: newWebhook };
+    let autoClaimMessage = '';
+    if (referenceCode && isSupabaseConfigured) {
+      try {
+        const pendingMatches = await fetchPendingTopUpsFromSupabase(referenceCode, true);
+        if (pendingMatches && pendingMatches.length > 0) {
+          const match = pendingMatches[0];
+          const userEmail = match.userEmail;
+          const { data: userData, error: userErr } = await supabase?.from('profiles').select('*').eq('email', userEmail.toLowerCase().trim()).maybeSingle() || { data: null, error: null };
+          if (!userErr && userData) {
+            const profile = userData;
+            const currentBalance = Number(profile.wallet_balance || 0);
+            const newBalance = Number((currentBalance + amount).toFixed(2));
+            await supabase?.from('profiles').update({ wallet_balance: newBalance }).eq('id', profile.id);
+            await supabase?.from('pending_topups').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', match.id);
+            await supabase?.from('sms_webhooks').update({ status: 'claimed', claimed_by: `${match.userName || 'Customer'} (${match.userEmail})`, reference_code: referenceCode }).eq('momo_txn_id', momoTxnId);
+            await supabase?.from('wallet_transactions').insert([{
+              id: `tx-${Date.now()}-${Math.random().toString(36).substring(2,8)}`,
+              user_id: profile.id,
+              amount,
+              type: 'topup',
+              description: `Auto-Credited via reference ${referenceCode} from webhook`,
+              reference_code: referenceCode,
+              momo_txn_id: momoTxnId,
+              balance_after: newBalance,
+              created_at: new Date().toISOString(),
+            }]);
+            setWebhookLogs(prev => prev.map(w => w.id === newWebhook.id ? { ...w, status: 'claimed', claimedBy: `${match.userName || 'Customer'} (${match.userEmail})` } : w));
+            autoClaimMessage = ` Auto-claimed with reference ${referenceCode}.`;
+          }
+        }
+      } catch (err) {
+        console.error('Error auto-claiming webhook by reference code:', err);
+      }
+    }
+
+    addAuditLog('SMS_WEBHOOK_RECEIVED', `Logged SMS webhook for Txn ID: ${momoTxnId}, GHS ${amount}, Network: ${network}${referenceCode ? `, Reference: ${referenceCode}` : ''}`);
+    showToast('SMS Webhook Logged', `Recorded Txn ID ${momoTxnId} (GHS ${amount.toFixed(2)}) as ${referenceCode ? 'Reference ' + referenceCode : 'Unclaimed'}.${autoClaimMessage}`, 'success');
+
+    return { success: true, message: `SMS webhook processed successfully.${autoClaimMessage}`, webhook: newWebhook };
   };
 
   const claimPaymentWithTxnId = (momoTxnId: string, expectedAmount?: number): { success: boolean; message: string; amount?: number } => {
@@ -1757,6 +1807,7 @@ useEffect(() => {
         return c;
       });
       localStorage.setItem('dmh_complaints', JSON.stringify(next));
+      window.dispatchEvent(new Event('storage'));
       return next;
     });
 
@@ -1764,7 +1815,6 @@ useEffect(() => {
       updateComplaintInSupabase(updatedComplaint);
     }
 
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     addAuditLog('REPLY_COMPLAINT', `Reply posted to complaint ${complaintId} by ${activeRole}`);
     showToast('Reply Sent', 'Your message has been posted.', 'info');
   };
@@ -1781,6 +1831,7 @@ useEffect(() => {
         return c;
       });
       localStorage.setItem('dmh_complaints', JSON.stringify(next));
+      window.dispatchEvent(new Event('storage'));
       return next;
     });
 
@@ -1788,7 +1839,6 @@ useEffect(() => {
       updateComplaintInSupabase(updatedComplaint);
     }
 
-    setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
     addAuditLog('UPDATE_COMPLAINT_STATUS', `Complaint ${complaintId} status changed to ${status}`);
     showToast('Complaint Status Updated', `Status changed to ${status.toUpperCase()}`, 'info');
   };
