@@ -1002,7 +1002,7 @@ useEffect(() => {
             SMS Payment Webhooks & Auto-Crediting Logs
           </h3>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-              Real-time table displaying incoming payment webhooks forwarded from SMS apps (MTN MoMo, Telecel Cash, AT Money).
+            Real-time table displaying incoming payment webhooks forwarded from SMS apps (MTN MoMo, Telecel Cash, AT Money).
           </p>
         </div>
 
@@ -1038,7 +1038,6 @@ useEffect(() => {
           </span>
         </div>
 
-        {/* Endpoint 1: App Instance URL */}
         <div className="space-y-1">
           <div className="text-[10px] font-bold uppercase text-slate-400">Current App Environment URL:</div>
           <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-amber-300 overflow-x-auto">
@@ -1055,7 +1054,6 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Endpoint 2: Vercel Production URL */}
         <div className="space-y-1">
           <div className="text-[10px] font-bold uppercase text-slate-400">Vercel Production Domain Endpoint:</div>
           <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300 overflow-x-auto">
@@ -1141,7 +1139,7 @@ useEffect(() => {
           </div>
 
           <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Raw SMS Message Text (Optional - Parser Auto-extracts)</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Raw SMS Message Text</label>
             <textarea
               rows={2}
               placeholder="e.g. Payment received for GHS 50.00 from 0241234567. Financial Transaction Id: 30192849182."
@@ -1178,7 +1176,7 @@ useEffect(() => {
                   setSimReferenceCode('');
                   setSimRawSms('');
                   setShowSmsSimulator(false);
-                  refreshWebhookLogs(); // Refresh immediately after simulating
+                  refreshWebhookLogs();
                 } else {
                   showToast('Error', res.message, 'error');
                 }
