@@ -72,8 +72,14 @@ export const AdminDashboard: React.FC = () => {
   } = useApp();
 
   const [activeAdminTab, setActiveAdminTab] = useState<
-    'analytics' | 'orders' | 'claims' | 'packages' | 'networks' | 'users' | 'webhooks' | 'announcements' | 'complaints'
-  >('analytics');
+    'analytics' | 'orders' | 'claims' | 'packages' | 'networks' | 'users' | 'webhooks' | 'announcements' | 'complaints' | 'audit_logs'
+  >(() => {
+    return (localStorage.getItem('dmh_active_admin_tab') as any) || 'analytics';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('dmh_active_admin_tab', activeAdminTab);
+  }, [activeAdminTab]);
 
   const tabsContainerRef = React.useRef<HTMLDivElement>(null);
 
@@ -397,6 +403,7 @@ export const AdminDashboard: React.FC = () => {
             { id: 'complaints', label: `Complaints (${complaints.filter(c => c.status === 'open' || c.status === 'in_progress').length})` },
             { id: 'networks', label: 'Networks Mode' },
             { id: 'webhooks', label: `SMS Webhooks & Claims (${webhookLogs.length})` },
+            { id: 'audit_logs', label: `Audit Logs (${auditLogs.length})` },
           ].map(tab => (
             <button
               key={tab.id}
@@ -1282,6 +1289,61 @@ export const AdminDashboard: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 10: AUDIT LOGS */}
+      {activeAdminTab === 'audit_logs' && (
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+          <div>
+            <h3 className="font-black text-base text-slate-900 dark:text-white uppercase tracking-wider">System Audit Logs</h3>
+            <p className="text-xs text-slate-500">Track and monitor all operations, wallet updates, network toggles, and catalog edits.</p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  <th className="p-4">Timestamp</th>
+                  <th className="p-4">Actor</th>
+                  <th className="p-4">Action</th>
+                  <th className="p-4">Details</th>
+                  <th className="p-4">IP Address</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs font-sans">
+                {auditLogs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-500">
+                      No system audit logs recorded yet.
+                    </td>
+                  </tr>
+                ) : (
+                  auditLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                      <td className="p-4 font-mono text-[11px] text-slate-500">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
+                      <td className="p-4 font-bold text-slate-900 dark:text-white">
+                        {log.actorEmail} ({log.actorRole.toUpperCase()})
+                      </td>
+                      <td className="p-4">
+                        <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="p-4 text-slate-600 dark:text-slate-300">
+                        {log.details}
+                      </td>
+                      <td className="p-4 font-mono text-[11px] text-slate-500">
+                        {log.ipAddress || '127.0.0.1'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

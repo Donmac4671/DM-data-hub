@@ -55,11 +55,19 @@ function extractWebhookData(body) {
 
     // 1. Transaction ID extraction
     if (!momoTxnId) {
-      const txnMatch = smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Trans ID|Ref ID|ID|Ref)[:\s]*([0-9A-Za-z]{6,20})/i) ||
-                       smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,16})/i) ||
-                       smsCleaned.match(/\b([0-9]{9,16})\b/);
-      if (txnMatch) {
-        momoTxnId = txnMatch[1].trim();
+      const allTxnMatches = [
+        smsCleaned.match(/(?:Financial Transaction Id|Transaction ID|Transaction Id|Txn ID|Trans ID|Ref ID|ID)[:\s]*([0-9A-Za-z]{6,20})/i),
+        smsCleaned.match(/(?:id|ref)[:\s]*([0-9]{8,16})/i),
+        smsCleaned.match(/\b([0-9]{9,16})\b/)
+      ];
+      for (const m of allTxnMatches) {
+        if (m && m[1]) {
+          const pot = m[1].trim();
+          if (!pot.toUpperCase().startsWith('DMH-')) {
+            momoTxnId = pot;
+            break;
+          }
+        }
       }
     }
 

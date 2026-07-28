@@ -478,6 +478,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return prev;
           });
         });
+
+        fetchPackagesFromSupabase().then(spPkgs => {
+          if (spPkgs.length > 0) {
+            setPackages(prev => {
+              if (prev.length !== spPkgs.length || JSON.stringify(prev) !== JSON.stringify(spPkgs)) {
+                localStorage.setItem('dmh_packages', JSON.stringify(spPkgs));
+                return spPkgs;
+              }
+              return prev;
+            });
+          }
+        });
+
+        fetchAnnouncementsFromSupabase().then(spAnns => {
+          if (spAnns.length > 0) {
+            setAnnouncements(prev => {
+              if (prev.length !== spAnns.length || JSON.stringify(prev) !== JSON.stringify(spAnns)) {
+                localStorage.setItem('dmh_announcements', JSON.stringify(spAnns));
+                return spAnns;
+              }
+              return prev;
+            });
+          }
+        });
       }
 
       fetch('/api/webhook/sms')
@@ -488,13 +512,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const existingMap = new Map(prev.map(w => [w.momoTxnId.toUpperCase(), w]));
               let hasNew = false;
               data.data.forEach((srvWh: any) => {
-                if (!existingMap.has(srvWh.momoTxnId.toUpperCase())) {
-                  existingMap.set(srvWh.momoTxnId.toUpperCase(), srvWh);
+                const key = srvWh.momoTxnId.toUpperCase();
+                const existing = existingMap.get(key);
+                if (!existing || JSON.stringify(existing) !== JSON.stringify(srvWh)) {
+                  existingMap.set(key, srvWh);
                   hasNew = true;
                 }
               });
               if (hasNew) {
-                const updatedList = Array.from(existingMap.values());
+                const updatedList = Array.from(existingMap.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                 localStorage.setItem('dmh_webhooks', JSON.stringify(updatedList));
                 return updatedList;
               }
@@ -588,9 +614,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [packages]);
 
   const toggleNetworkStatus = (networkId: NetworkId, online: boolean, notice?: string) => {
-    setNetworks(prev =>
-      prev.map(n => (n.id === networkId ? { ...n, online, noticeMessage: notice ?? n.noticeMessage } : n))
-    );
+    setNetworks(prev => {
+      const next = prev.map(n => (n.id === networkId ? { ...n, online, noticeMessage: notice ?? n.noticeMessage } : n));
+      localStorage.setItem('dmh_networks', JSON.stringify(next));
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+      return next;
+    });
     addAuditLog(`TOGGLE_NETWORK_${networkId.toUpperCase()}`, `Changed online status to ${online}. Notice: ${notice || 'None'}`);
     showToast(`Network ${networkId.toUpperCase()} Updated`, online ? 'Marked as ONLINE' : 'Marked as OFFLINE', online ? 'success' : 'error');
   };
@@ -1120,6 +1149,90 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     getStorageItem('dmh_claims', [])
   );
 
+  // Background reference-code auto-credit matcher
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser) return;
+
+    let hasUpdates = false;
+
+    // We only process if we have pending top-ups and unclaimed webhooks
+    const pendingReqs = pendingTopUpRequests.filter(r => r.status === 'pending');
+    const unclaimedWebhooks = webhookLogs.filter(w => w.status === 'unclaimed');
+
+    if (pendingReqs.length === 0 || unclaimedWebhooks.length === 0) return;
+
+    unclaimedWebhooks.forEach(wh => {
+      // Look for a pending top-up request that matches this webhook
+      const matchedReq = pendingReqs.find(req => {
+        const cleanRef = req.referenceCode.trim().toUpperCase();
+
+        // 1. Check if the reference code matches
+        const matchesRef = (wh.referenceCode && wh.referenceCode.toUpperCase() === cleanRef) ||
+                           (wh.rawSms && wh.rawSms.toUpperCase().includes(cleanRef));
+
+        if (!matchesRef) return false;
+
+        // 2. Check the 30-minute expiry constraint
+        const whTime = new Date(wh.date).getTime();
+        const reqTime = new Date(req.createdAt).getTime();
+        const diffMinutes = Math.abs(whTime - reqTime) / (60 * 1000);
+
+        const isNotExpired = diffMinutes <= 30 && (new Date().getTime() <= new Date(req.expiresAt).getTime());
+        return isNotExpired;
+      });
+
+      if (matchedReq) {
+        // We found a match! Let's auto-credit the customer.
+        const creditAmt = wh.amount;
+        const targetUserId = matchedReq.userId;
+
+        // Find user
+        const targetUser = usersList.find(u => u.id === targetUserId);
+        if (!targetUser) return;
+
+        const newBal = Number((targetUser.walletBalance + creditAmt).toFixed(2));
+        const claimedStr = `${targetUser.fullName} (${targetUser.email}) via Background Auto-Claim`;
+
+        // Update webhooks
+        setWebhookLogs(prev => prev.map(w => w.id === wh.id ? { ...w, status: 'claimed', claimedBy: claimedStr } : w));
+
+        // Update pending requests
+        setPendingTopUpRequests(prev => prev.map(r => r.id === matchedReq.id ? { ...r, status: 'completed' } : r));
+
+        // Credit user
+        creditUserWallet(targetUserId, creditAmt, `Auto-Claimed via MoMo Reference: ${matchedReq.referenceCode}`);
+
+        // Add transaction log
+        const tx: WalletTransaction = {
+          id: `tx-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+          userId: targetUserId,
+          amount: creditAmt,
+          type: 'topup',
+          description: `Auto-Claimed via MoMo Reference: ${matchedReq.referenceCode} (Txn: ${wh.momoTxnId})`,
+          referenceCode: matchedReq.referenceCode,
+          momoTxnId: wh.momoTxnId,
+          balanceAfter: newBal,
+          createdAt: new Date().toISOString()
+        };
+        setWalletTransactions(prev => [tx, ...prev]);
+
+        // If Supabase is configured, save all updates
+        if (isSupabaseConfigured) {
+          updateWebhookStatusInSupabase(wh.momoTxnId, 'claimed', claimedStr);
+          updateProfileInSupabase(targetUserId, { walletBalance: newBal });
+          // Update pending_topups status in DB if table supports it
+          supabase?.from('pending_topups').update({ status: 'completed' }).eq('id', matchedReq.id).then(() => {});
+        }
+
+        hasUpdates = true;
+      }
+    });
+
+    if (hasUpdates) {
+      setTimeout(() => window.dispatchEvent(new Event('storage')), 0);
+    }
+  }, [webhookLogs, pendingTopUpRequests, isAuthenticated, currentUser, usersList]);
+
   useEffect(() => {
     localStorage.setItem('dmh_claims', JSON.stringify(claims));
   }, [claims]);
@@ -1588,8 +1701,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setComplaints(prev => {
       const next = prev.map(c => {
         if (c.id === complaintId) {
-          const updated = { ...c, status, updatedAt: new Date().toISOString() };
+          const isClosing = status === 'resolved' || status === 'closed';
+          const newMessages = [...c.messages];
+          if (isClosing) {
+            const hasSystemMsg = newMessages.some(m => m.senderName === 'System' && m.message.includes('closed'));
+            if (!hasSystemMsg) {
+              newMessages.push({
+                id: `msg-closed-${Date.now()}`,
+                senderRole: 'admin',
+                senderName: 'System',
+                message: 'Chat has been closed by support.',
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+          const updated = { ...c, status, messages: newMessages, updatedAt: new Date().toISOString() };
           updatedComplaint = updated;
+
+          // Notify the customer in their AppNotifications
+          addNotification({
+            userId: c.userId,
+            title: `💬 Chat Ticket Closed`,
+            message: `Your support chat regarding "${c.subject}" has been marked as ${status.toUpperCase()} and closed by support.`,
+            type: 'complaint'
+          });
+
           return updated;
         }
         return c;
