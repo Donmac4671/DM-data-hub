@@ -30,12 +30,11 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // FIX: Direct localStorage approach - bypass context for user data
+  // Get user from localStorage
   useEffect(() => {
     const getUserFromStorage = () => {
       console.log('🔍 Getting user directly from localStorage...');
       
-      // First try context
       if (contextUser) {
         console.log('✅ User found in context');
         setUser(contextUser);
@@ -43,7 +42,6 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
         return;
       }
 
-      // Then try localStorage directly
       try {
         const savedUser = localStorage.getItem('dmh_user');
         if (savedUser) {
@@ -57,11 +55,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
         console.error('Error reading user from localStorage:', e);
       }
 
-      // Check if we're authenticated but no user
       if (isAuthenticated) {
         console.warn('⚠️ Authenticated but no user found - logging out');
         localStorage.removeItem('dmh_auth');
-        // We'll let the context handle the logout
       }
 
       setUser(null);
@@ -73,7 +69,6 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
-  // Show loading state
   if (isLoading) {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
@@ -85,7 +80,6 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
     );
   }
 
-  // Show login required if no user
   if (!user) {
     return (
       <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
@@ -114,71 +108,37 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({ isOpen, onClose }) => {
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  // In TopUpModal.tsx
-const handleGenerateRef = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!user) {
-    setError('Please log in');
-    return;
-  }
-
-  setIsGenerating(true);
-  setError(null);
-
-  try {
-    // Generate a reference code
-    const referenceCode = `DMH-${Math.floor(100000 + Math.random() * 900000)}`;
+  // ✅ SINGLE CORRECT handleGenerateRef function
+  const handleGenerateRef = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    // Store in pending_topups with user info
-    const { data, error } = await supabase
-      .from('pending_topups')
-      .insert([{
-        reference_code: referenceCode,
-        amount: amountInput,
-        user_id: user.id,
-        user_email: user.email,
-        user_name: user.fullName,
-        momo_number_to_pay: '0549358359',
-        status: 'pending',
-        expires_at: new Date(Date.now() + 120 * 60000).toISOString(),
-        created_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(error.message);
+    if (!user) {
+      setError('Please log in to top up your wallet');
+      return;
     }
 
-    console.log('✅ Pending top-up created:', data);
-    setPendingReq({
-      referenceCode,
-      amount: amountInput,
-      // ... other fields
-    });
-    setActiveStep('instructions');
-  } catch (err: any) {
-    console.error('❌ Error:', err);
-    setError(err.message);
-  } finally {
-    setIsGenerating(false);
-  }
-};
+    if (amountInput < 1) {
+      setError('Please enter a valid amount (minimum GHS 1.00)');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
 
     try {
+      // Step 1: Generate the reference code
       const req = generateTopUpReference(amountInput, momoNumberInput);
       console.log('📝 Generated reference:', req);
       
-      // In TopUpModal.tsx, in handleGenerateRef:
-await createPendingTopUpInSupabase(
-  req.referenceCode,
-  req.amount,
-  user.email,
-  user.fullName || 'Customer',
-  user.id, // Pass the user ID
-  momoNumberInput // Pass the momo number
-);
+      // Step 2: Save to Supabase with all required fields
+      await createPendingTopUpInSupabase(
+        req.referenceCode,
+        req.amount,
+        user.email,
+        user.fullName || 'Customer',
+        user.id,
+        momoNumberInput
+      );
 
       console.log('✅ Pending top-up saved to Supabase');
       setPendingReq(req);
@@ -330,40 +290,40 @@ await createPendingTopUpInSupabase(
         )}
 
         {/* STEP 2: Instructions & Reference Code */}
-{activeStep === 'instructions' && pendingReq && (
-  <div className="space-y-4 animate-in fade-in">
-    {/* Reference Box */}
-    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
-      <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">
-        Your Unique Payment Reference Code:
-      </span>
-      <div className="flex items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-amber-500/20">
-        <span className="font-mono text-xl font-black text-amber-500 tracking-wider">
-          {pendingReq.referenceCode}
-        </span>
-        <button
-          onClick={() => copyToClipboard(pendingReq.referenceCode, 'refCode')}
-          className="px-3 py-1.5 bg-amber-500 text-black rounded-lg text-xs font-bold flex items-center space-x-1 hover:bg-amber-400 transition-colors"
-        >
-          {copiedField === 'refCode' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-          <span>{copiedField === 'refCode' ? 'Copied!' : 'Copy'}</span>
-        </button>
-      </div>
-      
-      {/* NEW: Add expiry time display here */}
-      <div className="flex justify-between items-center text-xs bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
-        <p className="text-zinc-600 dark:text-zinc-400">
-          This reference will expire in:
-        </p>
-        <span className="text-amber-600 dark:text-amber-400 font-bold">
-          ⏰ 2 hours
-        </span>
-      </div>
-      
-      <p className="text-[11px] text-zinc-500">
-        Please enter this reference code in the reference/reason field when transferring payment.
-      </p>
-    </div>
+        {activeStep === 'instructions' && pendingReq && (
+          <div className="space-y-4 animate-in fade-in">
+            {/* Reference Box */}
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-500">
+                Your Unique Payment Reference Code:
+              </span>
+              <div className="flex items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-amber-500/20">
+                <span className="font-mono text-xl font-black text-amber-500 tracking-wider">
+                  {pendingReq.referenceCode}
+                </span>
+                <button
+                  onClick={() => copyToClipboard(pendingReq.referenceCode, 'refCode')}
+                  className="px-3 py-1.5 bg-amber-500 text-black rounded-lg text-xs font-bold flex items-center space-x-1 hover:bg-amber-400 transition-colors"
+                >
+                  {copiedField === 'refCode' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedField === 'refCode' ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
+              
+              <div className="flex justify-between items-center text-xs bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+                <p className="text-zinc-600 dark:text-zinc-400">
+                  This reference will expire in:
+                </p>
+                <span className="text-amber-600 dark:text-amber-400 font-bold">
+                  ⏰ 2 hours
+                </span>
+              </div>
+              
+              <p className="text-[11px] text-zinc-500">
+                Please enter this reference code in the reference/reason field when transferring payment.
+              </p>
+            </div>
+
             {/* Merchant Details */}
             <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 space-y-2 text-xs">
               <div className="flex justify-between items-center pb-2 border-b border-zinc-200 dark:border-zinc-700">
